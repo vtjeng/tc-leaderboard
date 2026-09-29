@@ -124,6 +124,34 @@ h1 {
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
 .seg-range { margin-left: auto; }
+.select-wrap { position: relative; display: block; }
+.select-wrap::after {
+  content: "";
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid var(--ink-2);
+  border-bottom: 1.5px solid var(--ink-2);
+  transform: translateY(-70%) rotate(45deg);
+  pointer-events: none;
+}
+.select-wrap select {
+  appearance: none;
+  min-width: 9.5rem;
+  padding: 0.45rem 2.2rem 0.45rem 0.75rem;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step--1);
+  line-height: 1.5;
+  cursor: pointer;
+}
+.select-wrap select:hover { background: var(--wash); }
+.select-wrap select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .seg.is-off { opacity: 0.45; }
 .seg.is-off label { cursor: not-allowed; }
 
@@ -198,6 +226,11 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 .tip li b { font: 500 var(--step--1) var(--font-data); font-variant-numeric: tabular-nums; }
 .tip li span.name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint { color: var(--muted); font-size: var(--step--2); }
+.mini svg { display: block; width: 100%; }
+.mini svg text { font: 400 10px var(--font-data); fill: var(--muted); }
+.mini .overlay { cursor: crosshair; }
+.mini .selection { fill: var(--ink); fill-opacity: 0.08; stroke: var(--ink-2); stroke-opacity: 0.7; }
+.mini .handle { cursor: ew-resize; }
 
 .standings { display: grid; gap: 0.6rem; min-width: 0; }
 .st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline; justify-content: space-between; }
@@ -219,6 +252,9 @@ th, td { padding: 0.45rem 0.5rem; text-align: left; white-space: nowrap; border-
 th { font-weight: 500; }
 thead th { vertical-align: bottom; }
 thead th.is-sort .col-label { color: var(--ink); }
+thead th[data-dir] .col-label::after { content: "\2009\25BE"; }
+thead th[data-dir="asc"] .col-label::after { content: "\2009\25B4"; }
+thead th .col-pool { display: block; font: 400 var(--step--2)/1.2 var(--font-body); color: var(--muted); text-transform: none; letter-spacing: 0; }
 thead th.group { text-align: center; padding-bottom: 0.3rem; }
 td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 td.is-sort { font-weight: 500; }
@@ -253,7 +289,8 @@ tbody tr:hover { background: var(--wash); }
 .play.no .icon { color: var(--bad); }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-footer { display: grid; gap: 0.5rem; max-width: 65ch; color: var(--ink-2); font-size: var(--step--1); }
+footer { color: var(--ink-2); font-size: var(--step--1); }
+footer ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.3rem; }
 footer b { color: var(--ink); font-weight: 600; }
 @media (prefers-reduced-motion: no-preference) {
   .chart svg path.line { transition: opacity 120ms ease; }
@@ -288,14 +325,17 @@ footer b { color: var(--ink); font-weight: 600; }
         <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
     </div>
-    <div class="seg seg-range" role="radiogroup" aria-labelledby="l-range">
-      <span class="seg-label" id="l-range">Range</span>
-      <div class="opts">
-        <label><input type="radio" name="range" id="range-all" value="all"><span>All</span></label>
-        <label><input type="radio" name="range" id="range-d90" value="d90"><span>90 days</span></label>
-        <label><input type="radio" name="range" id="range-d30" value="d30"><span>30 days</span></label>
-        <label><input type="radio" name="range" id="range-d7" value="d7"><span>7 days</span></label>
-      </div>
+    <div class="seg seg-range">
+      <label class="seg-label" for="range">Range</label>
+      <span class="select-wrap">
+        <select id="range">
+          <option value="all">All</option>
+          <option value="d90">Last 90 days</option>
+          <option value="d30">Last 30 days</option>
+          <option value="d7">Last 7 days</option>
+          <option value="custom" hidden disabled>Custom</option>
+        </select>
+      </span>
     </div>
   </div>
 
@@ -309,7 +349,10 @@ footer b { color: var(--ink); font-weight: 600; }
       <svg id="svg" tabindex="0" role="img" aria-labelledby="chart-title chart-desc"><desc id="chart-desc"></desc></svg>
       <div class="tip" id="tip" hidden></div>
     </div>
-    <p class="hint">Hover to read values. Click the chart, or focus it and use the arrow keys, to show the standings at that run.</p>
+    <div class="mini" id="mini-wrap">
+      <svg id="mini" role="img" aria-label="Overview of the full history. Drag across it to choose the time window shown above."></svg>
+    </div>
+    <p class="hint">Hover to read values. Click the chart, or focus it and use the arrow keys, to show the standings at that run. Drag across the overview strip to choose a window, then drag the window or its edges.</p>
   </section>
 
   <section class="standings" aria-labelledby="st-title">
@@ -345,9 +388,19 @@ footer b { color: var(--ink); font-weight: 600; }
   </section>
 
   <footer>
-    <p><b>Points</b> count matched 80&times;24 screens, one per recorded step where the port's render matches C exactly. <b>Screen</b> is points as a share of the maximum. <b>PRNG</b> is the share of matched random-number calls, weighted across pools by each pool's maximum points, as on the leaderboard. <b>Sessions</b> counts sessions matched end to end. The pool switch splits these into the 44 public sessions and the 44 held-out ones.</p>
-    <p><b>Anim</b> counts matched animation frames. <b>Startup</b> and <b>ms per move</b> are the two terms of the judge's linear speed fit. <b>Playable</b> is the judge's browser check. None of these four count toward the ranking.</p>
-    <p>The chart starts at the judge's scoring-rule change on May 5, 2026, 23:55 UTC, as the leaderboard's own sparkline does; the two earlier schemes produced point totals that are not comparable. Runs where the judge could not score a fork carry that fork's last good numbers.</p>
+    <ul>
+      <li><b>Points</b> count matched 80&times;24 screens: one point per recorded step where the port's render matches C exactly.</li>
+      <li><b>Screen</b> is points as a share of the maximum.</li>
+      <li><b>PRNG</b> is the share of matched random-number calls. With both pools selected, each pool is weighted by its maximum points, as on the leaderboard.</li>
+      <li><b>Sessions</b> counts sessions matched end to end.</li>
+      <li><b>Sessions pool</b> selects the 44 public sessions, the 44 held-out sessions, or both.</li>
+      <li><b>Anim</b> counts matched animation frames.</li>
+      <li><b>Startup</b> and <b>Per move</b> are the two terms of the judge's linear speed fit, startup_ms + per_move_ms &times; moves. The table's Speed column shows both.</li>
+      <li><b>Playable</b> is the judge's browser check: the build loads in headless Chromium without errors and stays under the judge's time limit per move.</li>
+      <li>Anim, Startup, Per move and Playable do not count toward the leaderboard's ranking.</li>
+      <li>The chart starts at the judge's <a href="https://github.com/davidbau/mazesofmenace/blob/ab5732da9dfdb991cfdaaefc6198751b689b0114/leaderboard/index.html#L532-L542">scoring-rule change on May 5, 2026, 23:55 UTC</a>, as the leaderboard's own sparkline does. The two earlier scoring schemes produced point totals that are not comparable.</li>
+      <li>When the judge cannot score a fork, that run carries the fork's last good numbers.</li>
+    </ul>
   </footer>
 </main>
 
@@ -400,22 +453,47 @@ footer b { color: var(--ink); font-weight: 600; }
   };
   const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
   const RANGE_DAYS = { all: null, d90: 90, d30: 30, d7: 7 };
+  const DEFAULT_RANGE = 'd30';
+
+  // "PRNG match" stays capitalised; "Points" becomes "points" mid-sentence.
+  const inSentence = (title) => (/^[A-Z]{2}/.test(title) ? title : title[0].toLowerCase() + title.slice(1));
+
+  // The judge published no runs from Jun 14 to Jun 21, 2026. Lines break at
+  // any gap longer than GAP_MS rather than drawing a slope through it.
+  const GAP_MS = DAY_MS;
+  function gapPath(line, pts) {
+    const segments = [[]];
+    pts.forEach((pt, i) => {
+      if (i > 0 && pt.t - pts[i - 1].t > GAP_MS) segments.push([]);
+      segments[segments.length - 1].push(pt);
+    });
+    return segments.map((seg) => line(seg) ?? '').join('');
+  }
 
   const $ = (id) => document.getElementById(id);
   const chartEl = $('chart');
   const svg = d3.select('#svg');
   const tip = $('tip');
+  const miniEl = $('mini-wrap');
+  const miniSvg = d3.select('#mini');
 
   let snapshots = [];   // [{ t: Date, byTeam: Map(team -> row) }], oldest first
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
-  const state = { range: 'all', metric: 'points', pool: 'combined', highlight: new Map(), pinned: null };
+  let mini = null;      // scale and brush from the last overview render
+  // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
+  // overview window; window then holds its [start, end] in epoch ms.
+  const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null };
 
   function loadSaved() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
       if (!saved) return false;
       if (saved.range in RANGE_DAYS) state.range = saved.range;
+      if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2) {
+        state.range = 'custom';
+        state.window = saved.window.map(Number);
+      }
       if (saved.metric in METRICS) state.metric = saved.metric;
       if (saved.pool in POOL_TEXT) state.pool = saved.pool;
       if (Array.isArray(saved.highlight)) {
@@ -427,7 +505,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        range: state.range, metric: state.metric, pool: state.pool, highlight: [...state.highlight],
+        range: state.range, window: state.window, metric: state.metric, pool: state.pool, highlight: [...state.highlight],
       }));
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
   }
@@ -447,13 +525,28 @@ footer b { color: var(--ink); font-weight: 600; }
     renderAll();
   }
 
+  function currentWindow() {
+    const first = +snapshots[0].t;
+    const last = +snapshots[snapshots.length - 1].t;
+    if (state.range === 'custom' && state.window) {
+      return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
+    }
+    const days = RANGE_DAYS[state.range];
+    return [days ? Math.max(first, last - days * DAY_MS) : first, last];
+  }
+
   function computeView() {
     const metric = METRICS[state.metric];
-    const last = snapshots[snapshots.length - 1].t;
-    const days = RANGE_DAYS[state.range];
-    const startMs = days ? +last - days * DAY_MS : -Infinity;
-    const i0 = Math.max(0, d3.bisector((s) => +s.t).left(snapshots, startMs));
-    const visible = snapshots.slice(i0);
+    const [w0, w1] = currentWindow();
+    const byTime = d3.bisector((s) => +s.t);
+    let i0 = byTime.left(snapshots, w0);
+    let i1 = byTime.right(snapshots, w1) - 1;
+    // A window narrower than the gap between two runs still shows two runs.
+    if (i1 - i0 < 1) {
+      i0 = Math.max(0, Math.min(i0, snapshots.length - 2));
+      i1 = i0 + 1;
+    }
+    const visible = snapshots.slice(i0, i1 + 1);
     const teams = new Set();
     visible.forEach((s) => s.byTeam.forEach((_, team) => teams.add(team)));
     const series = new Map();
@@ -464,19 +557,15 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    if (state.pinned != null && state.pinned < i0) state.pinned = null;
-    view = { metric, i0, visible, series, t0: visible[0].t, t1: last };
-  }
-
-  function metricCaption() {
-    const m = view.metric;
-    return m.pooled ? `${m.title}, ${POOL_TEXT[state.pool]}` : `${m.title}, from the judge's linear speed fit`;
+    if (state.pinned != null && (state.pinned < i0 || state.pinned > i1)) state.pinned = null;
+    view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
   function renderFilters() {
-    for (const name of ['range', 'metric', 'pool']) {
+    for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
+    $('range').value = state.range;
     const poolOff = !view.metric.pooled;
     $('pool-seg').classList.toggle('is-off', poolOff);
     document.querySelectorAll('input[name="pool"]').forEach((el) => { el.disabled = poolOff; });
@@ -544,7 +633,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function renderChart() {
     const m = view.metric;
     $('chart-title').textContent = m.title;
-    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)} · ${fmtInt(view.visible.length)} scoring runs`;
+    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`;
 
     const W = Math.max(280, chartEl.clientWidth);
     const H = Math.round(Math.max(260, Math.min(440, W * 0.46)));
@@ -588,11 +677,11 @@ footer b { color: var(--ink); font-weight: 600; }
     const context = [...view.series].filter(([team]) => !state.highlight.has(team));
     const focus = [...view.series].filter(([team]) => state.highlight.has(team));
     g.append('g').selectAll('path').data(context).join('path')
-      .attr('class', 'line').attr('d', ([, pts]) => line(pts))
+      .attr('class', 'line').attr('d', ([, pts]) => gapPath(line, pts))
       .attr('fill', 'none').style('stroke', 'var(--context)').attr('stroke-width', 1.25)
       .attr('stroke-linejoin', 'round');
     g.append('g').selectAll('path').data(focus).join('path')
-      .attr('class', 'line').attr('d', ([, pts]) => line(pts))
+      .attr('class', 'line').attr('d', ([, pts]) => gapPath(line, pts))
       .attr('fill', 'none').style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`)
       .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
     const ends = focus.map(([team, pts]) => {
@@ -612,8 +701,77 @@ footer b { color: var(--ink); font-weight: 600; }
     chart.hover = hover;
 
     const names = focus.map(([team]) => team).join(', ');
-    $('chart-desc').textContent = `Line chart of ${m.title.toLowerCase()} for ${view.series.size} teams from ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}.`
+    $('chart-desc').textContent = `Line chart of ${inSentence(m.title)} for ${view.series.size} teams from ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}.`
       + (names ? ` Highlighted: ${names}.` : '') + ' The standings table below lists the values.';
+  }
+
+  // The overview strip shares the main chart's left and right margins, so the
+  // two time axes line up.
+  function renderMini() {
+    const m = view.metric;
+    const W = Math.max(280, miniEl.clientWidth);
+    const H = 64;
+    const margin = { top: 4, right: 14, bottom: 18, left: 52 };
+    miniSvg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
+    miniSvg.selectAll('*').remove();
+
+    const series = new Map();
+    snapshots.forEach((s, i) => s.byTeam.forEach((r, team) => {
+      if (!series.has(team)) series.set(team, snapshots.map((snap) => ({ t: snap.t, v: null })));
+      const v = m.value(r, state.pool);
+      series.get(team)[i].v = v == null || Number.isNaN(v) ? null : v;
+    }));
+    let hi = 0;
+    series.forEach((pts) => pts.forEach(({ v }) => { if (v != null && v > hi) hi = v; }));
+    const x = d3.scaleTime().domain([snapshots[0].t, snapshots[snapshots.length - 1].t]).range([margin.left, W - margin.right]);
+    const y = d3.scaleLinear().domain(m.domain ?? [0, hi || 1]).range([H - margin.bottom, margin.top]);
+    const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v));
+
+    const g = miniSvg.append('g');
+    g.append('line')
+      .attr('x1', margin.left).attr('x2', W - margin.right)
+      .attr('y1', H - margin.bottom + 0.5).attr('y2', H - margin.bottom + 0.5)
+      .style('stroke', 'var(--axis)');
+    const [xInterval, xFormat] = timeTicks(x.domain()[1] - x.domain()[0], W - margin.left - margin.right);
+    g.append('g').selectAll('text').data(x.ticks(xInterval)).join('text')
+      .attr('x', (d) => x(d)).attr('y', H - 4).attr('text-anchor', 'middle').text(xFormat);
+    const all = [...series];
+    g.append('g').selectAll('path').data(all.filter(([team]) => !state.highlight.has(team))).join('path')
+      .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
+      .style('stroke', 'var(--context)').attr('stroke-width', 1);
+    g.append('g').selectAll('path').data(all.filter(([team]) => state.highlight.has(team))).join('path')
+      .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
+      .style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`).attr('stroke-width', 1.25);
+
+    const brush = d3.brushX()
+      .extent([[margin.left, margin.top], [W - margin.right, H - margin.bottom]])
+      .on('brush end', onBrush);
+    const brushG = g.append('g').attr('class', 'brush').call(brush);
+    // A programmatic move has no sourceEvent, so onBrush ignores it.
+    brushG.call(brush.move, [x(view.t0), x(view.t1)]);
+    mini = { x };
+  }
+
+  function onBrush({ selection, sourceEvent, type }) {
+    if (!sourceEvent || !mini) return;
+    hideHover();
+    if (!selection) {
+      // A click on the strip without a drag clears the window: show everything.
+      state.range = 'all';
+      state.window = null;
+      save();
+      renderAll();
+      return;
+    }
+    state.range = 'custom';
+    state.window = selection.map((px) => +mini.x.invert(px));
+    computeView();
+    renderFilters();
+    renderChart();
+    if (type === 'end') {
+      save();
+      renderTable();
+    }
   }
 
   function nearestIndex(px) {
@@ -679,11 +837,24 @@ footer b { color: var(--ink); font-weight: 600; }
     const m = view.metric;
     $('st-time').textContent = fmtTime.format(snap.t);
     $('st-latest').disabled = state.pinned == null;
-    $('st-sub').textContent = `Ranked by ${m.title.toLowerCase()}${m.pooled ? ` (${POOL_TEXT[state.pool]})` : ''}. Select a row to highlight that team in the chart.`;
-    // Points has one column per pool, so the highlighted column follows the pool.
+    $('st-sub').textContent = `Ranked by ${inSentence(m.title)}${m.pooled ? ` on ${POOL_TEXT[state.pool]}` : ''}, ${m.lowerIsBetter ? 'lowest' : 'highest'} first. Select a row to highlight that team in the chart.`;
+    // Points has one column per pool, so the ranked column follows the pool.
+    // The other pooled columns show combined values, except the ranked one,
+    // which shows the pool it is ranked on so the order matches the numbers.
     const sortCol = m.col === 'points' ? `points-${state.pool}` : m.col;
+    const colPool = (col) => (col === sortCol && m.pooled && m.col !== 'points' ? state.pool : 'combined');
     document.querySelectorAll('thead th[data-col]').forEach((th) => {
-      th.classList.toggle('is-sort', th.dataset.col === sortCol || th.dataset.col === m.col);
+      const col = th.dataset.col;
+      th.classList.toggle('is-sort', col === sortCol || col === m.col);
+      if (col === sortCol) th.dataset.dir = m.lowerIsBetter ? 'asc' : 'desc';
+      else delete th.dataset.dir;
+      th.querySelector('.col-pool')?.remove();
+      if (colPool(col) !== 'combined') {
+        const note = document.createElement('span');
+        note.className = 'col-pool';
+        note.textContent = state.pool === 'pub' ? 'public' : 'held-out';
+        th.append(note);
+      }
     });
 
     const entries = [...snap.byTeam.values()].map((r) => ({ r, v: m.value(r, state.pool) }));
@@ -741,13 +912,14 @@ footer b { color: var(--ink); font-weight: 600; }
       cell(totalPts == null ? '—' : fmtInt(totalPts), sortCls('points-combined'));
       cell(r.pub_points == null ? '—' : fmtInt(r.pub_points), sortCls('points-pub'));
       cell(r.held_points == null ? '—' : fmtInt(r.held_points), sortCls('points-held'));
-      const scr = screenPct(r, 'combined');
+      const scr = screenPct(r, colPool('screen'));
       cell(scr == null ? '—' : fmtPct(scr), sortCls('screen'));
-      const prng = prngPct(r, 'combined');
+      const prng = prngPct(r, colPool('prng'));
       cell(prng == null ? '—' : fmtPct(prng), sortCls('prng'));
-      const pass = pooled(r, 'combined', 'passing');
-      withSplit(cell(pass == null ? '—' : fmtInt(pass), sortCls('sessions')), r.pub_passing, r.held_passing);
-      const anim = pooled(r, 'combined', 'anim_matched');
+      const pass = pooled(r, colPool('sessions'), 'passing');
+      const passTd = cell(pass == null ? '—' : fmtInt(pass), sortCls('sessions'));
+      if (colPool('sessions') === 'combined') withSplit(passTd, r.pub_passing, r.held_passing);
+      const anim = pooled(r, colPool('anim'), 'anim_matched');
       cell(anim == null ? '—' : fmtInt(anim), sortCls('anim'));
       cell(r.speed_startup_ms == null ? '—'
         : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed'));
@@ -779,6 +951,7 @@ footer b { color: var(--ink); font-weight: 600; }
     renderFilters();
     renderLegend();
     renderChart();
+    renderMini();
     renderTable();
   }
 
@@ -796,6 +969,13 @@ footer b { color: var(--ink); font-weight: 600; }
         hideHover();
         renderAll();
       });
+    });
+    $('range').addEventListener('change', (e) => {
+      state.range = e.target.value;
+      state.window = null;
+      save();
+      hideHover();
+      renderAll();
     });
     $('st-latest').addEventListener('click', () => pin(null));
     const node = svg.node();
@@ -826,7 +1006,7 @@ footer b { color: var(--ink); font-weight: 600; }
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { if (view) { hideHover(); renderChart(); } });
+      raf = requestAnimationFrame(() => { if (view) { hideHover(); renderChart(); renderMini(); } });
     }).observe(chartEl);
   }
 
