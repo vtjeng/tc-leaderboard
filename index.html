@@ -334,6 +334,8 @@ tbody tr.is-blocked { cursor: not-allowed; }
 footer { color: var(--ink-2); font-size: var(--step--1); }
 footer ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 0.3rem; }
 footer b { color: var(--ink); font-weight: 600; }
+.credit { text-align: center; color: var(--muted); font-size: var(--step--1); }
+.credit .heart { color: var(--bad); }
 @media (prefers-reduced-motion: no-preference) {
   .chart svg path.line { transition: opacity 120ms ease; }
 }
@@ -432,6 +434,7 @@ footer b { color: var(--ink); font-weight: 600; }
       <li>When the judge cannot score a fork, that run carries the fork's last good numbers.</li>
     </ul>
   </footer>
+  <p class="credit">Made with <span class="heart" role="img" aria-label="love">&#10084;&#65039;</span> by <a href="https://vtjeng.com">Vincent Tjeng</a></p>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
