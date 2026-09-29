@@ -1163,31 +1163,59 @@ footer b { color: var(--ink); font-weight: 600; }
     }).observe(chartEl);
   }
 
-  async function main() {
-    wire();
-    let rows;
-    try {
-      rows = await d3.csv(CSV_URL, d3.autoType);
-    } catch (err) {
-      $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
-      return;
-    }
+  // The workflow looks for a new judge run every hour, so an open page
+  // re-reads the CSV on the same cadence. It redraws only when a new run has
+  // arrived, which keeps the reader's metric, window, highlights and pinned
+  // run in place.
+  const REFRESH_MS = 60 * 60 * 1000;
+
+  async function loadSnapshots() {
+    const rows = await d3.csv(CSV_URL, { cache: 'no-store' }, d3.autoType);
     const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
-    snapshots = [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
+    return [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
       t: new Date(t),
       byTeam: new Map(rs.map((r) => [r.team, r])),
     }));
+  }
+
+  function renderLatestRun() {
     const latestT = snapshots[snapshots.length - 1].t;
     const ageH = (Date.now() - latestT) / 3600000;
     const age = ageH < 1 ? 'under an hour ago' : ageH < 48 ? `${Math.round(ageH)} h ago` : `${Math.round(ageH / 24)} days ago`;
     $('latest-run').dateTime = latestT.toISOString();
     $('latest-run').textContent = `${fmtTime.format(latestT)} (${age})`;
+  }
+
+  async function refresh() {
+    try {
+      const next = await loadSnapshots();
+      if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
+        snapshots = next;
+        hideHover();
+        renderAll();
+      }
+    } catch {
+      // Keep showing the data already loaded; the next tick tries again.
+    }
+    renderLatestRun();
+  }
+
+  async function main() {
+    wire();
+    try {
+      snapshots = await loadSnapshots();
+    } catch (err) {
+      $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
+      return;
+    }
+    renderLatestRun();
     if (!loadSaved()) {
       const latest = [...snapshots[snapshots.length - 1].byTeam.values()];
       latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
     renderAll();
+    setInterval(refresh, REFRESH_MS);
   }
 
   main();
