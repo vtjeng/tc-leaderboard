@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Teleport Leaderboard History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=VT323&display=swap">
+<style>
+/* Layout: one column read top-down: a terminal-style status line, the filter
+   row, one chart card, then the standings table that the chart scrubs. */
+:root {
+  --bg: #f3f4f1;
+  --surface: #fbfbfa;
+  --ink: #121412;
+  --ink-2: #4a4f4b;
+  --muted: #6c726d;
+  --grid: #e4e6e2;
+  --axis: #c3c7c2;
+  --context: #c9ccc7;
+  --wash: rgba(18, 20, 18, 0.05);
+  --hairline: rgba(18, 20, 18, 0.12);
+  --good: #0ca30c;
+  --bad: #d03b3b;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+  --font-display: "VT323", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  --font-body: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "Atkinson Hyperlegible Mono", ui-monospace, "Cascadia Mono", Menlo, monospace;
+  --step--2: 0.75rem;
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.125rem;
+  --step-3: 2.75rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1110;
+    --surface: #171a18;
+    --ink: #eef1ee;
+    --ink-2: #bcc2bd;
+    --muted: #8b918c;
+    --grid: #262a27;
+    --axis: #3a3f3b;
+    --context: #3f4440;
+    --wash: rgba(238, 241, 238, 0.06);
+    --hairline: rgba(238, 241, 238, 0.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1110;
+  --surface: #171a18;
+  --ink: #eef1ee;
+  --ink-2: #bcc2bd;
+  --muted: #8b918c;
+  --grid: #262a27;
+  --axis: #3a3f3b;
+  --context: #3f4440;
+  --wash: rgba(238, 241, 238, 0.06);
+  --hairline: rgba(238, 241, 238, 0.12);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.5 var(--font-body);
+}
+.wrap {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding-inline: 16px;
+  padding-block: 2rem 3rem;
+  display: grid;
+  gap: 1.75rem;
+}
+@media (min-width: 40rem) { .wrap { padding-inline: 2rem; } }
+a { color: inherit; text-underline-offset: 0.15em; }
+h1, h2, p { margin: 0; }
+
+header { display: grid; gap: 0.6rem; }
+h1 {
+  font: 400 var(--step-3)/0.95 var(--font-display);
+  text-wrap: balance;
+}
+.dek { max-width: 65ch; color: var(--ink-2); }
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.25rem;
+  font: 400 var(--step--1)/1.4 var(--font-data);
+  color: var(--ink-2);
+}
+.status b { font-weight: 500; color: var(--ink); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 0.9rem 1.75rem; }
+.seg { display: grid; gap: 0.35rem; min-width: 0; }
+.seg-label, .col-label {
+  font: 500 var(--step--2)/1 var(--font-data);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--surface);
+}
+.opts label { position: relative; cursor: pointer; }
+.opts input { position: absolute; opacity: 0; pointer-events: none; }
+.opts span {
+  display: block;
+  padding: 0.3rem 0.7rem;
+  border-radius: 5px;
+  font-size: var(--step--1);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.opts label:hover span { background: var(--wash); }
+.opts input:checked + span { background: var(--ink); color: var(--bg); }
+.opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
+.seg.is-off { opacity: 0.45; }
+.seg.is-off label { cursor: not-allowed; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 1.1rem 1rem 0.9rem;
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+@media (min-width: 40rem) { .card { padding-inline: 1.4rem; } }
+.card-head { display: grid; gap: 0.15rem; }
+h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: balance; }
+.sub { color: var(--ink-2); font-size: var(--step--1); }
+
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.4rem;
+  align-items: center;
+  font-size: var(--step--1);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.45rem 0.2rem 0.55rem;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.chip:hover { background: var(--wash); }
+.chip:focus-visible, .key:focus-visible, .btn:focus-visible, svg:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.chip .x { color: var(--muted); font-size: 1.1em; line-height: 1; }
+.legend .others { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--ink-2); padding-inline: 0.4rem; }
+.legend .count { color: var(--muted); font-family: var(--font-data); font-size: var(--step--2); margin-left: auto; }
+.linekey { display: inline-block; width: 14px; height: 2px; border-radius: 1px; background: var(--c); flex: none; }
+
+.chart { position: relative; min-width: 0; }
+.chart svg { display: block; width: 100%; touch-action: pan-y; }
+.chart svg text { font: 400 11px var(--font-data); fill: var(--muted); font-variant-numeric: tabular-nums; }
+.chart .msg { padding: 3rem 1rem; color: var(--ink-2); text-align: center; }
+.tip {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  z-index: 2;
+  min-width: 11rem;
+  max-width: 16rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  font-size: var(--step--1);
+}
+.tip-time { color: var(--ink-2); margin-bottom: 0.3rem; font-family: var(--font-data); font-size: var(--step--2); }
+.tip ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; }
+.tip li { display: grid; grid-template-columns: 14px auto 1fr; align-items: center; gap: 0.5rem; }
+.tip li b { font: 500 var(--step--1) var(--font-data); font-variant-numeric: tabular-nums; }
+.tip li span.name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hint { color: var(--muted); font-size: var(--step--2); }
+
+.standings { display: grid; gap: 0.6rem; min-width: 0; }
+.st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline; justify-content: space-between; }
+.btn {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) { background: var(--wash); }
+.btn:disabled { color: var(--muted); cursor: default; }
+.table-scroll { overflow-x: auto; min-width: 0; }
+table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
+th, td { padding: 0.45rem 0.5rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--hairline); }
+th { font-weight: 500; }
+thead th { vertical-align: bottom; }
+thead th.is-sort .col-label { color: var(--ink); }
+td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+td.is-sort { font-weight: 500; }
+td .split { color: var(--muted); font-size: var(--step--2); margin-left: 0.35rem; }
+td.rank { color: var(--muted); width: 2.5rem; }
+td.team { font-family: var(--font-body); }
+td.team .cat { color: var(--muted); font-size: var(--step--2); margin-left: 0.4rem; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--wash); }
+.key {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.key .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--axis);
+}
+.key[aria-pressed="true"] .dot { background: var(--c); border-color: var(--c); }
+.key:disabled { cursor: not-allowed; opacity: 0.5; }
+.play { display: inline-flex; gap: 0.3rem; align-items: center; }
+.play .icon { font-weight: 700; }
+.play.ok .icon { color: var(--good); }
+.play.no .icon { color: var(--bad); }
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+footer { display: grid; gap: 0.5rem; max-width: 65ch; color: var(--ink-2); font-size: var(--step--1); }
+footer b { color: var(--ink); font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) {
+  .chart svg path.line { transition: opacity 120ms ease; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <h1>Teleport Leaderboard History</h1>
+    <p class="dek">Every scoring run of the <a href="https://mazesofmenace.ai/leaderboard/">Teleport Coding Challenge leaderboard</a> since the scoring rules settled on May 5, 2026. Unofficial; rebuilt from the judge's commits to <a href="https://github.com/davidbau/mazesofmenace">davidbau/mazesofmenace</a>.</p>
+    <p class="status" id="status" aria-live="polite">Loading&hellip;</p>
+  </header>
+
+  <div class="filters">
+    <div class="seg" role="radiogroup" aria-labelledby="l-range">
+      <span class="seg-label" id="l-range">Range</span>
+      <div class="opts">
+        <label><input type="radio" name="range" id="range-all" value="all"><span>All</span></label>
+        <label><input type="radio" name="range" id="range-d90" value="d90"><span>90 days</span></label>
+        <label><input type="radio" name="range" id="range-d30" value="d30"><span>30 days</span></label>
+        <label><input type="radio" name="range" id="range-d7" value="d7"><span>7 days</span></label>
+      </div>
+    </div>
+    <div class="seg" role="radiogroup" aria-labelledby="l-metric">
+      <span class="seg-label" id="l-metric">Metric</span>
+      <div class="opts">
+        <label><input type="radio" name="metric" id="metric-points" value="points"><span>Points</span></label>
+        <label><input type="radio" name="metric" id="metric-screen" value="screen"><span>Screen</span></label>
+        <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
+        <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
+        <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
+        <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup ms</span></label>
+        <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>ms per move</span></label>
+      </div>
+    </div>
+    <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
+      <span class="seg-label" id="l-pool">Sessions pool</span>
+      <div class="opts">
+        <label><input type="radio" name="pool" id="pool-combined" value="combined"><span>Both</span></label>
+        <label><input type="radio" name="pool" id="pool-pub" value="pub"><span>Public</span></label>
+        <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
+      </div>
+    </div>
+  </div>
+
+  <section class="card" aria-labelledby="chart-title">
+    <div class="card-head">
+      <h2 id="chart-title">Points</h2>
+      <p class="sub" id="chart-sub">&nbsp;</p>
+    </div>
+    <ul class="legend" id="legend"></ul>
+    <div class="chart" id="chart">
+      <svg id="svg" tabindex="0" role="img" aria-labelledby="chart-title chart-desc"><desc id="chart-desc"></desc></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <p class="hint">Hover to read values. Click the chart, or focus it and use the arrow keys, to show the standings at that run.</p>
+  </section>
+
+  <section class="standings" aria-labelledby="st-title">
+    <div class="st-head">
+      <h2 id="st-title">Standings at <span id="st-time">&hellip;</span></h2>
+      <button type="button" class="btn" id="st-latest" disabled>Show latest</button>
+    </div>
+    <p class="sub" id="st-sub">&nbsp;</p>
+    <div class="table-scroll">
+      <table id="table">
+        <thead>
+          <tr>
+            <th scope="col"><span class="sr-only">Highlight</span></th>
+            <th scope="col"><span class="col-label">#</span></th>
+            <th scope="col"><span class="col-label">Team</span></th>
+            <th scope="col" class="num" data-col="points"><span class="col-label">Points</span></th>
+            <th scope="col" class="num" data-col="screen"><span class="col-label">Screen</span></th>
+            <th scope="col" class="num" data-col="prng"><span class="col-label">PRNG</span></th>
+            <th scope="col" class="num" data-col="sessions"><span class="col-label">Sessions</span></th>
+            <th scope="col" class="num" data-col="anim"><span class="col-label">Anim</span></th>
+            <th scope="col" class="num" data-col="speed"><span class="col-label">Speed</span></th>
+            <th scope="col"><span class="col-label">Playable</span></th>
+            <th scope="col" class="num" data-col="change"><span class="col-label">Change</span></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p><b>Points</b> count matched 80&times;24 screens, one per recorded step where the port's render matches C exactly. <b>Screen</b> is points as a share of the maximum. <b>PRNG</b> is the share of matched random-number calls, weighted across pools by each pool's maximum points, as on the leaderboard. <b>Sessions</b> counts sessions matched end to end. The pool switch splits these into the 44 public sessions and the 44 held-out ones.</p>
+    <p><b>Anim</b> counts matched animation frames. <b>Startup</b> and <b>ms per move</b> are the two terms of the judge's linear speed fit. <b>Playable</b> is the judge's browser check. None of these four count toward the ranking.</p>
+    <p>The chart starts at the judge's scoring-rule change on May 5, 2026, 23:55 UTC, as the leaderboard's own sparkline does; the two earlier schemes produced point totals that are not comparable. Runs where the judge could not score a fork carry that fork's last good numbers.</p>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+(() => {
+  const CSV_URL = 'data/leaderboard.csv';
+  // The leaderboard's sparkline starts here; the two scoring schemes before
+  // it produced point totals that are not comparable with the current one.
+  const RULES_CUTOFF = Date.parse('2026-05-05T23:55:00Z');
+  const MAX_HIGHLIGHT = 8;
+  const DEFAULT_HIGHLIGHT = 6;
+  const STORE_KEY = 'tc-leaderboard-view';
+  const DAY_MS = 86400000;
+
+  const fmtInt = d3.format(',');
+  const fmtPct = (v) => v.toFixed(1) + '%';
+  const fmtTime = new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  });
+  const fmtDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+  // Combined values follow the leaderboard: public + held-out, with a missing
+  // held-out pool counted as zero.
+  function pooled(r, pool, field) {
+    if (pool !== 'combined') return r[`${pool}_${field}`];
+    const pub = r[`pub_${field}`];
+    return pub == null ? null : pub + (r[`held_${field}`] ?? 0);
+  }
+  function screenPct(r, pool) {
+    const max = pooled(r, pool, 'max_points');
+    return max ? (pooled(r, pool, 'points') / max) * 100 : null;
+  }
+  function prngPct(r, pool) {
+    if (pool !== 'combined') return r[`${pool}_rng_pct`];
+    const pm = r.pub_max_points ?? 0;
+    const hm = r.held_max_points ?? 0;
+    if (r.pub_rng_pct == null || pm + hm === 0) return null;
+    return (r.pub_rng_pct * pm + (r.held_rng_pct ?? 0) * hm) / (pm + hm);
+  }
+
+  const signed = (f) => (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + f(Math.abs(v));
+  const METRICS = {
+    points: { title: 'Points', col: 'points', pooled: true, fmt: fmtInt, delta: signed(fmtInt), value: (r, p) => pooled(r, p, 'points') },
+    screen: { title: 'Screen match', col: 'screen', pooled: true, fmt: fmtPct, delta: signed((v) => v.toFixed(1) + ' pp'), domain: [0, 100], tick: (v) => v + '%', value: screenPct },
+    prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPct, delta: signed((v) => v.toFixed(1) + ' pp'), domain: [0, 100], tick: (v) => v + '%', value: prngPct },
+    sessions: { title: 'Sessions matched', col: 'sessions', pooled: true, fmt: fmtInt, delta: signed(fmtInt), value: (r, p) => pooled(r, p, 'passing') },
+    anim: { title: 'Animation frames matched', col: 'anim', pooled: true, fmt: fmtInt, delta: signed(fmtInt), value: (r, p) => pooled(r, p, 'anim_matched') },
+    startup: { title: 'Startup time', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => fmtInt(Math.round(v)) + ' ms', delta: signed((v) => fmtInt(Math.round(v)) + ' ms'), tick: (v) => fmtInt(v), value: (r) => r.speed_startup_ms },
+    permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', delta: signed((v) => v.toFixed(2) + ' ms'), tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
+  };
+  const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
+  const RANGE_DAYS = { all: null, d90: 90, d30: 30, d7: 7 };
+
+  const $ = (id) => document.getElementById(id);
+  const chartEl = $('chart');
+  const svg = d3.select('#svg');
+  const tip = $('tip');
+
+  let snapshots = [];   // [{ t: Date, byTeam: Map(team -> row) }], oldest first
+  let view = null;      // derived from state + snapshots by computeView()
+  let chart = null;     // scales from the last chart render, for hover
+  const state = { range: 'all', metric: 'points', pool: 'combined', highlight: new Map(), pinned: null };
+
+  function loadSaved() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
+      if (!saved) return false;
+      if (saved.range in RANGE_DAYS) state.range = saved.range;
+      if (saved.metric in METRICS) state.metric = saved.metric;
+      if (saved.pool in POOL_TEXT) state.pool = saved.pool;
+      if (Array.isArray(saved.highlight)) {
+        saved.highlight.slice(0, MAX_HIGHLIGHT).forEach(([team, slot]) => state.highlight.set(team, slot));
+      }
+      return state.highlight.size > 0;
+    } catch { return false; }
+  }
+  function save() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({
+        range: state.range, metric: state.metric, pool: state.pool, highlight: [...state.highlight],
+      }));
+    } catch { /* storage unavailable: the view still works, it just is not remembered */ }
+  }
+
+  function toggleHighlight(team) {
+    if (state.highlight.has(team)) {
+      state.highlight.delete(team);
+    } else if (state.highlight.size < MAX_HIGHLIGHT) {
+      // A team keeps its colour slot while highlighted; new teams take the
+      // lowest free slot, so removing one team never repaints the others.
+      const used = new Set(state.highlight.values());
+      let slot = 1;
+      while (used.has(slot)) slot += 1;
+      state.highlight.set(team, slot);
+    }
+    save();
+    renderAll();
+  }
+
+  function computeView() {
+    const metric = METRICS[state.metric];
+    const last = snapshots[snapshots.length - 1].t;
+    const days = RANGE_DAYS[state.range];
+    const startMs = days ? +last - days * DAY_MS : -Infinity;
+    const i0 = Math.max(0, d3.bisector((s) => +s.t).left(snapshots, startMs));
+    const visible = snapshots.slice(i0);
+    const teams = new Set();
+    visible.forEach((s) => s.byTeam.forEach((_, team) => teams.add(team)));
+    const series = new Map();
+    teams.forEach((team) => {
+      series.set(team, visible.map((s) => {
+        const r = s.byTeam.get(team);
+        const v = r ? metric.value(r, state.pool) : null;
+        return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
+      }));
+    });
+    if (state.pinned != null && state.pinned < i0) state.pinned = null;
+    view = { metric, i0, visible, series, t0: visible[0].t, t1: last };
+  }
+
+  function metricCaption() {
+    const m = view.metric;
+    return m.pooled ? `${m.title}, ${POOL_TEXT[state.pool]}` : `${m.title}, from the judge's linear speed fit`;
+  }
+
+  function renderFilters() {
+    for (const name of ['range', 'metric', 'pool']) {
+      document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
+    }
+    const poolOff = !view.metric.pooled;
+    $('pool-seg').classList.toggle('is-off', poolOff);
+    document.querySelectorAll('input[name="pool"]').forEach((el) => { el.disabled = poolOff; });
+  }
+
+  function renderLegend() {
+    const ul = $('legend');
+    ul.replaceChildren();
+    const entries = [...state.highlight].sort((a, b) => a[1] - b[1]);
+    for (const [team, slot] of entries) {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip';
+      btn.setAttribute('aria-label', `Remove ${team} from the chart highlights`);
+      const key = document.createElement('span');
+      key.className = 'linekey';
+      key.style.setProperty('--c', `var(--s${slot})`);
+      const name = document.createElement('span');
+      name.textContent = team;
+      const x = document.createElement('span');
+      x.className = 'x';
+      x.setAttribute('aria-hidden', 'true');
+      x.textContent = '×';
+      btn.append(key, name, x);
+      btn.addEventListener('click', () => toggleHighlight(team));
+      li.append(btn);
+      ul.append(li);
+    }
+    const others = document.createElement('li');
+    others.className = 'others';
+    const key = document.createElement('span');
+    key.className = 'linekey';
+    key.style.setProperty('--c', 'var(--context)');
+    others.append(key, document.createTextNode('Other teams'));
+    const count = document.createElement('li');
+    count.className = 'count';
+    count.textContent = `${state.highlight.size} of ${MAX_HIGHLIGHT} highlighted`;
+    ul.append(others, count);
+  }
+
+  function renderChart() {
+    const m = view.metric;
+    $('chart-title').textContent = m.title;
+    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)} · ${fmtInt(view.visible.length)} scoring runs`;
+
+    const W = Math.max(280, chartEl.clientWidth);
+    const H = Math.round(Math.max(260, Math.min(440, W * 0.46)));
+    const margin = { top: 12, right: 14, bottom: 28, left: 52 };
+    svg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
+    svg.selectAll(':scope > g').remove();
+
+    const values = [];
+    view.series.forEach((pts) => pts.forEach((p) => { if (p.v != null) values.push(p.v); }));
+    // Every metric is non-negative; the speed fit's intercept can dip a hair
+    // below zero, which is not worth an extra gridline.
+    const [lo, hi] = m.domain ?? [0, Math.max(d3.max(values) ?? 1, 1e-9)];
+    const x = d3.scaleTime().domain([view.t0, view.t1]).range([margin.left, W - margin.right]);
+    const y = d3.scaleLinear().domain([lo, hi]).nice().range([H - margin.bottom, margin.top]);
+    chart = { x, y, margin, W, H };
+
+    const g = svg.append('g');
+    const yTicks = y.ticks(5);
+    const tickFmt = m.tick ?? d3.format('~s');
+    g.append('g').selectAll('line').data(yTicks).join('line')
+      .attr('x1', margin.left).attr('x2', W - margin.right)
+      .attr('y1', (d) => y(d) + 0.5).attr('y2', (d) => y(d) + 0.5)
+      .style('stroke', (d) => (d === 0 ? 'var(--axis)' : 'var(--grid)'))
+      .attr('stroke-width', 1);
+    g.append('g').selectAll('text').data(yTicks).join('text')
+      .attr('x', margin.left - 8).attr('y', (d) => y(d)).attr('dy', '0.32em')
+      .attr('text-anchor', 'end').text(tickFmt);
+    const xTicks = x.ticks(Math.max(3, Math.floor((W - margin.left - margin.right) / 90)));
+    g.append('g').selectAll('text').data(xTicks).join('text')
+      .attr('x', (d) => x(d)).attr('y', H - margin.bottom + 18)
+      .attr('text-anchor', 'middle').text(x.tickFormat());
+
+    if (state.pinned != null) {
+      const px = x(snapshots[state.pinned].t);
+      g.append('line')
+        .attr('x1', px).attr('x2', px).attr('y1', margin.top).attr('y2', H - margin.bottom)
+        .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
+    }
+
+    const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v));
+    const context = [...view.series].filter(([team]) => !state.highlight.has(team));
+    const focus = [...view.series].filter(([team]) => state.highlight.has(team));
+    g.append('g').selectAll('path').data(context).join('path')
+      .attr('class', 'line').attr('d', ([, pts]) => line(pts))
+      .attr('fill', 'none').style('stroke', 'var(--context)').attr('stroke-width', 1.25)
+      .attr('stroke-linejoin', 'round');
+    g.append('g').selectAll('path').data(focus).join('path')
+      .attr('class', 'line').attr('d', ([, pts]) => line(pts))
+      .attr('fill', 'none').style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`)
+      .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
+    const ends = focus.map(([team, pts]) => {
+      const lastPt = [...pts].reverse().find((p) => p.v != null);
+      return lastPt ? { team, p: lastPt } : null;
+    }).filter(Boolean);
+    g.append('g').selectAll('circle').data(ends).join('circle')
+      .attr('cx', (d) => x(d.p.t)).attr('cy', (d) => y(d.p.v)).attr('r', 4)
+      .style('fill', (d) => `var(--s${state.highlight.get(d.team)})`)
+      .style('stroke', 'var(--surface)').attr('stroke-width', 2);
+
+    const hover = g.append('g').attr('class', 'hover').style('display', 'none');
+    hover.append('line').attr('class', 'cross')
+      .attr('y1', margin.top).attr('y2', H - margin.bottom)
+      .style('stroke', 'var(--ink-2)').attr('stroke-opacity', 0.6).attr('stroke-width', 1);
+    hover.append('g').attr('class', 'dots');
+    chart.hover = hover;
+
+    const names = focus.map(([team]) => team).join(', ');
+    $('chart-desc').textContent = `Line chart of ${m.title.toLowerCase()} for ${view.series.size} teams from ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}.`
+      + (names ? ` Highlighted: ${names}.` : '') + ' The standings table below lists the values.';
+  }
+
+  function nearestIndex(px) {
+    const t = +chart.x.invert(px);
+    const i = d3.bisector((s) => +s.t).center(view.visible, t);
+    return Math.max(0, Math.min(view.visible.length - 1, i));
+  }
+
+  function showHover(i) {
+    const s = view.visible[i];
+    const { x, y, hover, W } = chart;
+    const px = x(s.t);
+    hover.style('display', null);
+    hover.select('.cross').attr('x1', px).attr('x2', px);
+    const rows = [];
+    state.highlight.forEach((slot, team) => {
+      const p = view.series.get(team)?.[i];
+      if (p && p.v != null) rows.push({ team, slot, v: p.v });
+    });
+    rows.sort((a, b) => (view.metric.lowerIsBetter ? a.v - b.v : b.v - a.v));
+    hover.select('.dots').selectAll('circle').data(rows).join('circle')
+      .attr('cx', px).attr('cy', (d) => y(d.v)).attr('r', 4)
+      .style('fill', (d) => `var(--s${d.slot})`)
+      .style('stroke', 'var(--surface)').attr('stroke-width', 2);
+
+    const time = document.createElement('div');
+    time.className = 'tip-time';
+    time.textContent = fmtTime.format(s.t);
+    const ol = document.createElement('ol');
+    for (const r of rows) {
+      const li = document.createElement('li');
+      const key = document.createElement('span');
+      key.className = 'linekey';
+      key.style.setProperty('--c', `var(--s${r.slot})`);
+      const val = document.createElement('b');
+      val.textContent = view.metric.fmt(r.v);
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = r.team;
+      li.append(key, val, name);
+      ol.append(li);
+    }
+    if (!rows.length) {
+      const li = document.createElement('li');
+      li.textContent = 'Highlight teams in the table to list them here.';
+      ol.append(li);
+    }
+    tip.replaceChildren(time, ol);
+    tip.hidden = false;
+    const tw = tip.offsetWidth;
+    const left = px + 14 + tw > W ? px - 14 - tw : px + 14;
+    tip.style.transform = `translateX(${Math.max(0, left)}px)`;
+  }
+
+  function hideHover() {
+    if (chart?.hover) chart.hover.style('display', 'none');
+    tip.hidden = true;
+  }
+
+  function renderTable() {
+    const idx = state.pinned ?? snapshots.length - 1;
+    const snap = snapshots[idx];
+    const m = view.metric;
+    const vi = idx - view.i0;
+    $('st-time').textContent = fmtTime.format(snap.t);
+    $('st-latest').disabled = state.pinned == null;
+    $('st-sub').textContent = `Ranked by ${m.title.toLowerCase()}${m.pooled ? ` (${POOL_TEXT[state.pool]})` : ''}; change is since ${fmtDay.format(view.t0)}. Select a row to highlight that team in the chart.`;
+    document.querySelectorAll('thead th[data-col]').forEach((th) => {
+      th.classList.toggle('is-sort', th.dataset.col === m.col);
+    });
+
+    const entries = [...snap.byTeam.values()].map((r) => {
+      const v = m.value(r, state.pool);
+      const pts = view.series.get(r.team);
+      const first = pts?.slice(0, vi + 1).find((p) => p.v != null);
+      return { r, v, change: v != null && first ? v - first.v : null };
+    });
+    const dir = m.lowerIsBetter ? 1 : -1;
+    entries.sort((a, b) => {
+      if (a.v == null || b.v == null) return (a.v == null) - (b.v == null);
+      return dir * (a.v - b.v) || (pooled(b.r, 'combined', 'points') ?? 0) - (pooled(a.r, 'combined', 'points') ?? 0);
+    });
+
+    const tbody = $('tbody');
+    tbody.replaceChildren();
+    const full = state.highlight.size >= MAX_HIGHLIGHT;
+    entries.forEach(({ r, v, change }, i) => {
+      const tr = document.createElement('tr');
+      const slot = state.highlight.get(r.team);
+      const cell = (text, cls) => {
+        const td = document.createElement('td');
+        if (cls) td.className = cls;
+        if (text != null) td.textContent = text;
+        tr.append(td);
+        return td;
+      };
+      const keyTd = cell(null);
+      const key = document.createElement('button');
+      key.type = 'button';
+      key.className = 'key';
+      key.setAttribute('aria-pressed', String(slot != null));
+      key.setAttribute('aria-label', `${slot != null ? 'Remove' : 'Highlight'} ${r.team} in the chart`);
+      if (slot != null) key.style.setProperty('--c', `var(--s${slot})`);
+      if (slot == null && full) {
+        key.disabled = true;
+        key.title = `Up to ${MAX_HIGHLIGHT} teams can be highlighted. Remove one first.`;
+      }
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      key.append(dot);
+      keyTd.append(key);
+      cell(v == null ? '' : String(i + 1), 'rank num');
+      const teamTd = cell(r.team, 'team');
+      if (r.category && r.category !== 'none') {
+        const cat = document.createElement('span');
+        cat.className = 'cat';
+        cat.textContent = r.category;
+        teamTd.append(cat);
+      }
+      const sortCls = (col) => (col === m.col ? 'num is-sort' : 'num');
+      const withSplit = (td, a, b) => {
+        if (a == null) return;
+        const split = document.createElement('span');
+        split.className = 'split';
+        split.textContent = `${fmtInt(a)} + ${fmtInt(b ?? 0)}`;
+        td.append(split);
+      };
+      const totalPts = pooled(r, 'combined', 'points');
+      withSplit(cell(totalPts == null ? '—' : fmtInt(totalPts), sortCls('points')), r.pub_points, r.held_points);
+      const scr = screenPct(r, 'combined');
+      cell(scr == null ? '—' : fmtPct(scr), sortCls('screen'));
+      const prng = prngPct(r, 'combined');
+      cell(prng == null ? '—' : fmtPct(prng), sortCls('prng'));
+      const pass = pooled(r, 'combined', 'passing');
+      withSplit(cell(pass == null ? '—' : fmtInt(pass), sortCls('sessions')), r.pub_passing, r.held_passing);
+      const anim = pooled(r, 'combined', 'anim_matched');
+      cell(anim == null ? '—' : fmtInt(anim), sortCls('anim'));
+      cell(r.speed_startup_ms == null ? '—'
+        : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed'));
+      const playTd = cell(null);
+      if (r.playable != null) {
+        const span = document.createElement('span');
+        span.className = `play ${r.playable ? 'ok' : 'no'}`;
+        const icon = document.createElement('span');
+        icon.className = 'icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = r.playable ? '✓' : '✕';
+        span.append(icon, document.createTextNode(r.playable ? 'yes' : 'no'));
+        if (!r.playable && r.not_playable_reason) span.title = `Reason: ${r.not_playable_reason}`;
+        playTd.append(span);
+      } else {
+        playTd.textContent = '—';
+      }
+      cell(change == null ? '—' : m.delta(change), 'num');
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('button') && e.target.closest('button') !== key) return;
+        if (key.disabled) return;
+        toggleHighlight(r.team);
+      });
+      tbody.append(tr);
+    });
+  }
+
+  function renderStatus() {
+    const last = snapshots[snapshots.length - 1];
+    const latestRows = [...last.byTeam.values()];
+    const maxPts = d3.max(latestRows, (r) => pooled(r, 'combined', 'max_points'));
+    const parts = [
+      ['Runs', fmtInt(snapshots.length)],
+      ['Teams', fmtInt(latestRows.length)],
+      ['Max', `${fmtInt(maxPts)} pts`],
+      ['Latest', fmtTime.format(last.t)],
+    ];
+    const el = $('status');
+    el.replaceChildren(...parts.map(([k, v]) => {
+      const span = document.createElement('span');
+      const b = document.createElement('b');
+      b.textContent = v;
+      span.append(`${k}:`, b);
+      return span;
+    }));
+  }
+
+  function renderAll() {
+    computeView();
+    renderFilters();
+    renderLegend();
+    renderChart();
+    renderTable();
+  }
+
+  function pin(i) {
+    state.pinned = i == null || i >= snapshots.length - 1 ? null : i;
+    renderChart();
+    renderTable();
+  }
+
+  function wire() {
+    document.querySelectorAll('.opts input').forEach((el) => {
+      el.addEventListener('change', () => {
+        state[el.name] = el.value;
+        save();
+        hideHover();
+        renderAll();
+      });
+    });
+    $('st-latest').addEventListener('click', () => pin(null));
+    const node = svg.node();
+    node.addEventListener('pointermove', (e) => {
+      if (!chart) return;
+      showHover(nearestIndex(d3.pointer(e, node)[0]));
+    });
+    node.addEventListener('pointerleave', hideHover);
+    node.addEventListener('click', (e) => {
+      if (!chart) return;
+      pin(view.i0 + nearestIndex(d3.pointer(e, node)[0]));
+      showHover(nearestIndex(d3.pointer(e, node)[0]));
+    });
+    node.addEventListener('keydown', (e) => {
+      const lastVi = view.visible.length - 1;
+      let vi = (state.pinned ?? snapshots.length - 1) - view.i0;
+      if (e.key === 'ArrowLeft') vi -= 1;
+      else if (e.key === 'ArrowRight') vi += 1;
+      else if (e.key === 'Home') vi = 0;
+      else if (e.key === 'End' || e.key === 'Escape') vi = lastVi;
+      else return;
+      e.preventDefault();
+      vi = Math.max(0, Math.min(lastVi, vi));
+      pin(view.i0 + vi);
+      showHover(vi);
+    });
+    node.addEventListener('blur', hideHover);
+    let raf = 0;
+    new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => { if (view) { hideHover(); renderChart(); } });
+    }).observe(chartEl);
+  }
+
+  async function main() {
+    wire();
+    let rows;
+    try {
+      rows = await d3.csv(CSV_URL, d3.autoType);
+    } catch (err) {
+      $('status').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
+      return;
+    }
+    const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
+    snapshots = [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
+      t: new Date(t),
+      byTeam: new Map(rs.map((r) => [r.team, r])),
+    }));
+    if (!loadSaved()) {
+      const latest = [...snapshots[snapshots.length - 1].byTeam.values()];
+      latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
+      latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
+    }
+    renderStatus();
+    renderAll();
+  }
+
+  main();
+})();
+</script>
+</body>
+</html>
