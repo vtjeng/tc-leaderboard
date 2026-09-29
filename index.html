@@ -92,25 +92,28 @@ h1 {
   text-wrap: balance;
 }
 .dek { color: var(--ink-2); }
+.updated { color: var(--muted); font: 400 var(--step--1) var(--font-data); }
 
-.filters {
-  display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem;
+/* The title bar is frozen: Pool is the one control that applies to the whole
+   page, so it stays within reach while the standings scroll. */
+.topbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1.25rem;
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
   margin-inline: -16px; padding: 0.6rem 16px;
   background: var(--bg);
   border-bottom: 1px solid transparent;
 }
-@media (min-width: 40rem) { .filters { margin-inline: -2rem; padding-inline: 2rem; } }
-/* On phones the frozen bar stays one row tall and scrolls sideways, with the
-   pool switch first so it stays in view. */
+@media (min-width: 40rem) { .topbar { margin-inline: -2rem; padding-inline: 2rem; } }
+.topbar.is-stuck { border-bottom-color: var(--hairline); box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.25); }
+.topbar .seg { grid-template-columns: auto auto; align-items: center; gap: 0.6rem; }
+/* Phones: a smaller one-line title over the pool switch keeps the frozen bar short. */
 @media (max-width: 39.99rem) {
-  .filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .filters .opts { flex-wrap: nowrap; }
-  .filters .seg { flex: none; }
-  .seg-range { margin-left: 0; }
-  #pool-seg { order: -1; }
+  .topbar { padding-block: 0.45rem; gap: 0.35rem; }
+  .topbar h1 { font-size: 1.6rem; min-width: 0; }
+  .topbar .seg-label { display: none; }
 }
-.filters.is-stuck { border-bottom-color: var(--hairline); box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.25); }
+.controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: end; }
+.controls .opts { flex-wrap: wrap; }
 .seg { display: grid; gap: 0.35rem; min-width: 0; }
 .seg-label, .col-label {
   font: 500 var(--step--2)/1 var(--font-data);
@@ -141,6 +144,7 @@ h1 {
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
 .seg-range { margin-left: auto; }
+.sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
 .select-wrap::after {
   content: "";
@@ -272,13 +276,25 @@ table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
 th, td { padding: 0.45rem 0.5rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--hairline); }
 th { font-weight: 500; }
 thead th { vertical-align: bottom; }
-thead th.is-sort .col-label { color: var(--ink); }
-thead th[data-dir] .col-label::after { content: "\2009\25BE"; }
-thead th[data-dir="asc"] .col-label::after { content: "\2009\25B4"; }
+th .sort {
+  all: unset;
+  cursor: pointer;
+  border-radius: 3px;
+}
+th .sort:hover .col-label { color: var(--ink); }
+th .sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+th[aria-sort] .col-label { color: var(--ink); }
+/* Every sortable header reserves the arrow's space, so sorting never shifts
+   column widths; only the active one shows it. */
+th .sort .col-label::after { content: "\2009\25BE"; visibility: hidden; }
+th[aria-sort] .sort .col-label::after { visibility: visible; }
+th[aria-sort="ascending"] .sort .col-label::after { content: "\2009\25B4"; }
 
 thead th.group { text-align: center; padding-bottom: 0.3rem; }
 td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
-td.is-sort { font-weight: 500; }
+/* A vertical rule opens every metric column (Points, PRNG, Sessions, Anim,
+   Speed, Playable) with either pool setting; the Total, Public and Held-out
+   sub-columns inside a metric have none. */
 th.gstart, td.gstart { border-left: 1px solid var(--hairline); }
 td.rank { color: var(--muted); width: 2.5rem; }
 td.team { font-family: var(--font-body); }
@@ -323,23 +339,9 @@ footer b { color: var(--ink); font-weight: 600; }
 </head>
 <body>
 <main class="wrap">
-  <header>
+  <div class="sentinel" id="top-sentinel"></div>
+  <div class="topbar" id="topbar">
     <h1>Teleport Leaderboard History</h1>
-    <p class="dek">Unofficial history of the <a href="https://mazesofmenace.ai/leaderboard/">Teleport Coding Challenge leaderboard</a>, rebuilt from <a href="https://github.com/davidbau/mazesofmenace">the judge's commits</a> since May 5, 2026.</p>
-  </header>
-
-  <div class="filters">
-    <div class="seg" role="radiogroup" aria-labelledby="l-metric">
-      <span class="seg-label" id="l-metric">Metric</span>
-      <div class="opts">
-        <label><input type="radio" name="metric" id="metric-points" value="points"><span>Points</span></label>
-        <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
-        <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
-        <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
-        <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
-        <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
-      </div>
-    </div>
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
       <span class="seg-label" id="l-pool">Pool</span>
       <div class="opts">
@@ -348,21 +350,38 @@ footer b { color: var(--ink); font-weight: 600; }
         <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
     </div>
-    <div class="seg seg-range">
-      <label class="seg-label" for="range">Range</label>
-      <span class="select-wrap">
-        <select id="range">
-          <option value="all">All</option>
-          <option value="d90">Last 90 days</option>
-          <option value="d30">Last 30 days</option>
-          <option value="d7">Last 7 days</option>
-          <option value="custom" hidden disabled>Custom</option>
-        </select>
-      </span>
-    </div>
   </div>
+  <header>
+    <p class="dek">Unofficial history of the <a href="https://mazesofmenace.ai/leaderboard/">Teleport Coding Challenge leaderboard</a>, rebuilt from <a href="https://github.com/davidbau/mazesofmenace">the judge's commits</a> since May 5, 2026.</p>
+    <p class="updated">Latest scoring run: <time id="latest-run">loading&hellip;</time></p>
+  </header>
 
   <section class="card" aria-labelledby="chart-title">
+    <div class="controls">
+      <div class="seg" role="radiogroup" aria-labelledby="l-metric">
+        <span class="seg-label" id="l-metric">Metric</span>
+        <div class="opts">
+          <label><input type="radio" name="metric" id="metric-points" value="points"><span>Points</span></label>
+          <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
+          <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
+          <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
+          <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
+          <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
+        </div>
+      </div>
+      <div class="seg seg-range">
+        <label class="seg-label" for="range">Range</label>
+        <span class="select-wrap">
+          <select id="range">
+            <option value="all">All</option>
+            <option value="d90">Last 90 days</option>
+            <option value="d30">Last 30 days</option>
+            <option value="d7">Last 7 days</option>
+            <option value="custom" hidden disabled>Custom</option>
+          </select>
+        </span>
+      </div>
+    </div>
     <div class="card-head">
       <h2 id="chart-title">Points</h2>
       <p class="sub" id="chart-sub">Loading scoring runs&hellip;</p>
@@ -383,7 +402,7 @@ footer b { color: var(--ink); font-weight: 600; }
       <h2 id="st-title">Standings at <span id="st-time">&hellip;</span></h2>
       <button type="button" class="btn" id="st-latest" disabled>Show latest</button>
     </div>
-    <p class="sub" id="st-sub">&nbsp;</p>
+    <p class="sub" id="st-sub">Click a column header to sort; select a row to highlight that team in the chart.</p>
     <div class="table-scroll">
       <table id="table">
         <thead id="thead"></thead>
@@ -483,7 +502,9 @@ footer b { color: var(--ink); font-weight: 600; }
   let mini = null;      // scale and brush from the last overview render
   // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
   // overview window; window then holds its [start, end] in epoch ms.
-  const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null };
+  // sort is the standings table's own order, independent of the chart metric:
+  // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
+  const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null, sort: { key: 'points-combined', dir: 'desc' } };
 
   function loadSaved() {
     try {
@@ -496,6 +517,9 @@ footer b { color: var(--ink); font-weight: 600; }
       }
       if (saved.metric in METRICS) state.metric = saved.metric;
       if (saved.pool in POOL_TEXT) state.pool = saved.pool;
+      if (saved.sort && typeof saved.sort.key === 'string' && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
+        state.sort = { key: saved.sort.key, dir: saved.sort.dir };
+      }
       if (Array.isArray(saved.highlight)) {
         saved.highlight.slice(0, MAX_HIGHLIGHT).forEach(([team, slot]) => state.highlight.set(team, slot));
       }
@@ -505,7 +529,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        range: state.range, window: state.window, metric: state.metric, pool: state.pool, highlight: [...state.highlight],
+        range: state.range, window: state.window, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
       }));
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
   }
@@ -863,59 +887,100 @@ footer b { color: var(--ink); font-weight: 600; }
   ];
   const POOL_LABEL = { combined: 'Total', pub: 'Public', held: 'Held-out' };
 
-  function renderHead(pools, sortCol, groupCol) {
-    const th = (label, { cls = '', col, scope = 'col', rowspan, colspan, sr } = {}) => {
+  // Sort keys for the table. Pooled keys follow the Pool switch: with a single
+  // pool shown, a key for another pool maps onto the visible one.
+  const GROUP_KEYS = new Set(TABLE_GROUPS.map((g) => g.col));
+  function sortKey(pools) {
+    const { key } = state.sort;
+    const [group, pool] = key.split('-');
+    if (GROUP_KEYS.has(group) && !pools.includes(pool)) return `${group}-${pools[0]}`;
+    if (!GROUP_KEYS.has(group) && !['team', 'speed', 'playable'].includes(key)) return `points-${pools[0]}`;
+    return key;
+  }
+  function sortValue(r, key) {
+    if (key === 'team') return r.team.toLowerCase();
+    if (key === 'speed') return r.speed_per_move_ms;
+    if (key === 'playable') return r.playable == null ? null : Number(r.playable);
+    const [group, pool] = key.split('-');
+    const v = METRICS[TABLE_GROUPS.find((g) => g.col === group).metric].value(r, pool);
+    return v == null || Number.isNaN(v) ? null : v;
+  }
+  // Names and speed read best ascending; everything else starts highest first.
+  const firstDir = (key) => (key === 'team' || key === 'speed' ? 'asc' : 'desc');
+  function setSort(key) {
+    const current = sortKey(state.pool === 'combined' ? ['combined', 'pub', 'held'] : [state.pool]);
+    state.sort = { key, dir: key === current ? (state.sort.dir === 'asc' ? 'desc' : 'asc') : firstDir(key) };
+    save();
+    renderTable();
+    document.querySelector(`#thead button[data-key="${key}"]`)?.focus();
+  }
+
+  function renderHead(pools, key) {
+    const th = (label, { cls = '', sortAs, scope = 'col', rowspan, colspan, sr, title } = {}) => {
       const el = document.createElement('th');
       el.scope = scope;
       if (cls) el.className = cls;
       if (rowspan) el.rowSpan = rowspan;
       if (colspan) el.colSpan = colspan;
-      if (col && (col === sortCol || col === groupCol)) el.classList.add('is-sort');
-      // The arrow marks the one column the rows are ordered by.
-      if (col && col === sortCol) el.dataset.dir = view.metric.lowerIsBetter ? 'asc' : 'desc';
       const span = document.createElement('span');
       span.className = sr ? 'sr-only' : 'col-label';
       span.textContent = label;
-      el.append(span);
+      if (sortAs) {
+        if (sortAs === key) el.setAttribute('aria-sort', state.sort.dir === 'asc' ? 'ascending' : 'descending');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sort';
+        btn.dataset.key = sortAs;
+        btn.title = title ?? `Sort by ${label}`;
+        btn.addEventListener('click', () => setSort(sortAs));
+        btn.append(span);
+        el.append(btn);
+      } else {
+        el.append(span);
+      }
       return el;
     };
     const top = document.createElement('tr');
     const sub = document.createElement('tr');
     // With one pool, each metric is a single column: no second header row
-    // repeating the pool name; the subtitle above the table names it once.
+    // repeating the pool name; the top bar names the pool once.
     const split = pools.length > 1;
     const rs = split ? 2 : undefined;
-    top.append(th('Highlight', { rowspan: rs, sr: true }), th('#', { rowspan: rs }), th('Team', { rowspan: rs }));
+    top.append(th('Highlight', { rowspan: rs, sr: true }), th('#', { rowspan: rs }), th('Team', { rowspan: rs, sortAs: 'team' }));
     for (const g of TABLE_GROUPS) {
       if (split) {
-        top.append(th(g.label, { cls: 'group gstart', col: g.col, scope: 'colgroup', colspan: pools.length }));
-        pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], { cls: k === 0 ? 'num gstart' : 'num', col: `${g.col}-${pool}` })));
+        top.append(th(g.label, { cls: 'group gstart', scope: 'colgroup', colspan: pools.length }));
+        pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], {
+          cls: k === 0 ? 'num gstart' : 'num', sortAs: `${g.col}-${pool}`, title: `Sort by ${g.label}, ${POOL_LABEL[pool].toLowerCase()}`,
+        })));
       } else {
-        top.append(th(g.label, { cls: 'num gstart', col: `${g.col}-${pools[0]}` }));
+        top.append(th(g.label, { cls: 'num gstart', sortAs: `${g.col}-${pools[0]}` }));
       }
     }
-    top.append(th('Speed', { cls: 'num gstart', col: 'speed', rowspan: rs }), th('Playable', { rowspan: rs }));
+    top.append(
+      th('Speed', { cls: 'num gstart', sortAs: 'speed', rowspan: rs, title: 'Sort by ms per move' }),
+      th('Playable', { cls: 'gstart', rowspan: rs, sortAs: 'playable' }),
+    );
     $('thead').replaceChildren(...(split ? [top, sub] : [top]));
   }
 
   function renderTable() {
     const idx = state.pinned ?? snapshots.length - 1;
     const snap = snapshots[idx];
-    const m = view.metric;
     $('st-time').textContent = fmtTime.format(snap.t);
     $('st-latest').disabled = state.pinned == null;
-    $('st-sub').textContent = `Ranked by ${inSentence(m.title)}${m.pooled ? ` on ${POOL_TEXT[state.pool]}` : ''}, ${m.lowerIsBetter ? 'lowest' : 'highest'} first. Select a row to highlight that team in the chart.`;
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = state.pool === 'combined' ? ['combined', 'pub', 'held'] : [state.pool];
-    const sortCol = m.pooled ? `${m.col}-${state.pool}` : m.col;
-    renderHead(pools, sortCol, m.col);
+    const key = sortKey(pools);
+    renderHead(pools, key);
 
-    const entries = [...snap.byTeam.values()].map((r) => ({ r, v: m.value(r, state.pool) }));
-    const dir = m.lowerIsBetter ? 1 : -1;
+    const entries = [...snap.byTeam.values()].map((r) => ({ r, v: sortValue(r, key) }));
+    const dir = state.sort.dir === 'asc' ? 1 : -1;
     entries.sort((a, b) => {
       if (a.v == null || b.v == null) return (a.v == null) - (b.v == null);
-      return dir * (a.v - b.v) || (pooled(b.r, 'combined', 'points') ?? 0) - (pooled(a.r, 'combined', 'points') ?? 0);
+      const c = typeof a.v === 'string' ? a.v.localeCompare(b.v) : a.v - b.v;
+      return dir * c || (pooled(b.r, 'combined', 'points') ?? 0) - (pooled(a.r, 'combined', 'points') ?? 0);
     });
 
     const tbody = $('tbody');
@@ -966,7 +1031,7 @@ footer b { color: var(--ink); font-weight: 600; }
         cat.textContent = r.category;
         teamTd.append(cat);
       }
-      const sortCls = (col) => (col === sortCol ? 'num is-sort' : 'num');
+      const sortCls = (col) => (col === key ? 'num is-sort' : 'num');
       for (const g of TABLE_GROUPS) {
         pools.forEach((pool, k) => {
           const v = METRICS[g.metric].value(r, pool);
@@ -976,7 +1041,7 @@ footer b { color: var(--ink); font-weight: 600; }
       }
       cell(r.speed_startup_ms == null ? '—'
         : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed') + ' gstart');
-      const playTd = cell(null);
+      const playTd = cell(null, 'gstart');
       if (r.playable != null) {
         const span = document.createElement('span');
         span.className = `play ${r.playable ? 'ok' : 'no'}`;
@@ -1032,10 +1097,10 @@ footer b { color: var(--ink); font-weight: 600; }
       renderAll();
     });
     $('st-latest').addEventListener('click', () => pin(null));
-    // Shadow under the frozen filter bar only once the header has scrolled away.
-    const filters = document.querySelector('.filters');
-    new IntersectionObserver(([e]) => filters.classList.toggle('is-stuck', !e.isIntersecting))
-      .observe(document.querySelector('header'));
+    // Shadow under the frozen title bar only once the page has scrolled.
+    const topbar = $('topbar');
+    new IntersectionObserver(([e]) => topbar.classList.toggle('is-stuck', !e.isIntersecting))
+      .observe($('top-sentinel'));
     const node = svg.node();
     node.addEventListener('pointermove', (e) => {
       if (!chart) return;
@@ -1082,6 +1147,11 @@ footer b { color: var(--ink); font-weight: 600; }
       t: new Date(t),
       byTeam: new Map(rs.map((r) => [r.team, r])),
     }));
+    const latestT = snapshots[snapshots.length - 1].t;
+    const ageH = (Date.now() - latestT) / 3600000;
+    const age = ageH < 1 ? 'under an hour ago' : ageH < 48 ? `${Math.round(ageH)} h ago` : `${Math.round(ageH / 24)} days ago`;
+    $('latest-run').dateTime = latestT.toISOString();
+    $('latest-run').textContent = `${fmtTime.format(latestT)} (${age})`;
     if (!loadSaved()) {
       const latest = [...snapshots[snapshots.length - 1].byTeam.values()];
       latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
