@@ -426,7 +426,7 @@ footer b { color: var(--ink); font-weight: 600; }
       <li><b>Anim</b> counts matched animation frames.</li>
       <li><b>Startup</b> and <b>Per move</b> are the two terms of the judge's linear speed fit, startup_ms + per_move_ms &times; moves, which is not split by pool. The table's Speed column shows both.</li>
       <li><b>Playable</b> is the judge's browser check: the build loads in headless Chromium without errors and stays under the judge's time limit per move.</li>
-      <li>Anim, Startup, Per move and Playable do not count toward the leaderboard's ranking.</li>
+      <li>The official leaderboard ranks teams by points; Anim, Startup, Per move and Playable are shown there for information only. This page's default order matches it (combined points), but you can sort the table by any column.</li>
       <li>Screen match is not shown: every team has the same maximum points in each run, so it would rank exactly like points.</li>
       <li>The chart starts at the judge's <a href="https://github.com/davidbau/mazesofmenace/blob/ab5732da9dfdb991cfdaaefc6198751b689b0114/leaderboard/index.html#L532-L542">scoring-rule change on May 5, 2026, 23:55 UTC</a>, as the leaderboard's own sparkline does. The two earlier scoring schemes produced point totals that are not comparable.</li>
       <li>When the judge cannot score a fork, that run carries the fork's last good numbers.</li>
