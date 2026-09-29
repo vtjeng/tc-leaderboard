@@ -93,7 +93,24 @@ h1 {
 }
 .dek { color: var(--ink-2); }
 
-.filters { display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem; }
+.filters {
+  display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  margin-inline: -16px; padding: 0.6rem 16px;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+}
+@media (min-width: 40rem) { .filters { margin-inline: -2rem; padding-inline: 2rem; } }
+/* On phones the frozen bar stays one row tall and scrolls sideways, with the
+   pool switch first so it stays in view. */
+@media (max-width: 39.99rem) {
+  .filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .filters .opts { flex-wrap: nowrap; }
+  .filters .seg { flex: none; }
+  .seg-range { margin-left: 0; }
+  #pool-seg { order: -1; }
+}
+.filters.is-stuck { border-bottom-color: var(--hairline); box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.25); }
 .seg { display: grid; gap: 0.35rem; min-width: 0; }
 .seg-label, .col-label {
   font: 500 var(--step--2)/1 var(--font-data);
@@ -828,13 +845,21 @@ footer b { color: var(--ink); font-weight: 600; }
     };
     const top = document.createElement('tr');
     const sub = document.createElement('tr');
-    top.append(th('Highlight', { rowspan: 2, sr: true }), th('#', { rowspan: 2 }), th('Team', { rowspan: 2 }));
+    // With one pool, each metric is a single column: no second header row
+    // repeating the pool name; the subtitle above the table names it once.
+    const split = pools.length > 1;
+    const rs = split ? 2 : undefined;
+    top.append(th('Highlight', { rowspan: rs, sr: true }), th('#', { rowspan: rs }), th('Team', { rowspan: rs }));
     for (const g of TABLE_GROUPS) {
-      top.append(th(g.label, { cls: 'group gstart', col: g.col, scope: 'colgroup', colspan: pools.length }));
-      pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], { cls: k === 0 ? 'num gstart' : 'num', col: `${g.col}-${pool}` })));
+      if (split) {
+        top.append(th(g.label, { cls: 'group gstart', col: g.col, scope: 'colgroup', colspan: pools.length }));
+        pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], { cls: k === 0 ? 'num gstart' : 'num', col: `${g.col}-${pool}` })));
+      } else {
+        top.append(th(g.label, { cls: 'num gstart', col: `${g.col}-${pools[0]}` }));
+      }
     }
-    top.append(th('Speed', { cls: 'num gstart', col: 'speed', rowspan: 2 }), th('Playable', { rowspan: 2 }));
-    $('thead').replaceChildren(top, sub);
+    top.append(th('Speed', { cls: 'num gstart', col: 'speed', rowspan: rs }), th('Playable', { rowspan: rs }));
+    $('thead').replaceChildren(...(split ? [top, sub] : [top]));
   }
 
   function renderTable() {
@@ -983,6 +1008,10 @@ footer b { color: var(--ink); font-weight: 600; }
       showHover(vi);
     });
     node.addEventListener('blur', hideHover);
+    // Shadow under the frozen filter bar only once the header has scrolled away.
+    const filters = document.querySelector('.filters');
+    new IntersectionObserver(([e]) => filters.classList.toggle('is-stuck', !e.isIntersecting))
+      .observe(document.querySelector('header'));
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
