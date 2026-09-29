@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Teleport Leaderboard History</title>
+<title>Teleport Leaderboard</title>
 <!-- Favicon: the inverse of the teleport-contest site's blue "@" icon. -->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPHJlY3QgeD0iMSIgeT0iMSIgd2lkdGg9IjMwIiBoZWlnaHQ9IjMwIiByeD0iNiIgZmlsbD0iI2ZmZiIgc3Ryb2tlPSIjMmE3OGQ2IiBzdHJva2Utd2lkdGg9IjIiLz4KICA8dGV4dCB4PSIxNiIgeT0iMjQuNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC13ZWlnaHQ9ImJvbGQiIGZvbnQtc2l6ZT0iMjYiIGZpbGw9IiMyYTc4ZDYiPkA8L3RleHQ+Cjwvc3ZnPgo=">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -245,7 +245,7 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 .tip li { display: grid; grid-template-columns: 14px auto 1fr; align-items: center; gap: 0.5rem; }
 .tip li b { font: 500 var(--step--1) var(--font-data); font-variant-numeric: tabular-nums; }
 .tip li span.name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hint { color: var(--muted); font-size: var(--step--2); }
+.hint { color: var(--muted); font-size: var(--step--2); margin: 0; padding-left: 1.1rem; display: grid; gap: 0.15rem; }
 .mini svg { display: block; width: 100%; }
 .mini svg text { font: 400 10px var(--font-data); fill: var(--muted); }
 .mini .overlay { cursor: crosshair; }
@@ -343,7 +343,7 @@ footer b { color: var(--ink); font-weight: 600; }
 <main class="wrap">
   <div class="sentinel" id="top-sentinel"></div>
   <div class="topbar" id="topbar">
-    <h1>Teleport Leaderboard History</h1>
+    <h1>Teleport Leaderboard</h1>
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
       <span class="seg-label" id="l-pool">Pool</span>
       <div class="opts">
@@ -396,7 +396,11 @@ footer b { color: var(--ink); font-weight: 600; }
     <div class="mini" id="mini-wrap">
       <svg id="mini" role="img" aria-label="Overview of the full history. Drag the window to move it, drag its edges to resize it, or drag elsewhere to draw a new one."></svg>
     </div>
-    <p class="hint">Hover to read values. Click the chart, or focus it and use the arrow keys, to show the standings at that run. Drag the window in the overview strip to move it, drag its grips to resize it, or drag anywhere else on the strip to draw a new one.</p>
+    <ul class="hint">
+      <li>Hover or tap the chart to read values.</li>
+      <li>Click or tap a point in time to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
+      <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
+    </ul>
   </section>
 
   <section class="standings" aria-labelledby="st-title">
