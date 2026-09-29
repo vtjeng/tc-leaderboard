@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Teleport Leaderboard History</title>
+<!-- Favicon: the inverse of the teleport-contest site's blue "@" icon. -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CiAgPHJlY3QgeD0iMSIgeT0iMSIgd2lkdGg9IjMwIiBoZWlnaHQ9IjMwIiByeD0iNiIgZmlsbD0iI2ZmZiIgc3Ryb2tlPSIjMmE3OGQ2IiBzdHJva2Utd2lkdGg9IjIiLz4KICA8dGV4dCB4PSIxNiIgeT0iMjQuNSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC13ZWlnaHQ9ImJvbGQiIGZvbnQtc2l6ZT0iMjYiIGZpbGw9IiMyYTc4ZDYiPkA8L3RleHQ+Cjwvc3ZnPgo=">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=VT323&display=swap">
@@ -280,6 +282,7 @@ th .sort {
   border-radius: 3px;
 }
 th .sort:hover .col-label { color: var(--ink); }
+th .sort .denom { display: block; margin-top: 0.25rem; color: var(--muted); font: 400 var(--step--2)/1 var(--font-data); font-variant-numeric: tabular-nums; }
 th .sort:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 th[aria-sort] .col-label { color: var(--ink); }
 /* Every sortable header reserves the arrow's space, so sorting never shifts
@@ -344,7 +347,7 @@ footer b { color: var(--ink); font-weight: 600; }
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
       <span class="seg-label" id="l-pool">Pool</span>
       <div class="opts">
-        <label><input type="radio" name="pool" id="pool-combined" value="combined"><span>Both</span></label>
+        <label><input type="radio" name="pool" id="pool-combined" value="combined"><span>Combined</span></label>
         <label><input type="radio" name="pool" id="pool-pub" value="pub"><span>Public</span></label>
         <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
@@ -413,9 +416,9 @@ footer b { color: var(--ink); font-weight: 600; }
   <footer>
     <ul>
       <li><b>Points</b> count matched 80&times;24 screens: one point per recorded step where the port's render matches C exactly.</li>
-      <li><b>PRNG</b> is the share of matched random-number calls. With both pools selected, each pool is weighted by its maximum points, as on the leaderboard.</li>
+      <li><b>PRNG</b> is the share of matched random-number calls. Combined weights each pool by its maximum points, as on the leaderboard.</li>
       <li><b>Sessions</b> counts sessions matched end to end.</li>
-      <li><b>Pool</b> applies to the whole page. Both shows Points, PRNG, Sessions and Anim as a total plus the 44 public and 44 held-out sessions; Public or Held-out narrows the chart and table to that pool.</li>
+      <li><b>Pool</b> applies to the whole page. Combined sums the 44 public and 44 held-out sessions, as the leaderboard ranks them; Public or Held-out shows just that pool in the chart and table.</li>
       <li><b>Anim</b> counts matched animation frames.</li>
       <li><b>Startup</b> and <b>Per move</b> are the two terms of the judge's linear speed fit, startup_ms + per_move_ms &times; moves, which is not split by pool. The table's Speed column shows both.</li>
       <li><b>Playable</b> is the judge's browser check: the build loads in headless Chromium without errors and stays under the judge's time limit per move.</li>
@@ -873,11 +876,23 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   const TABLE_GROUPS = [
-    { col: 'points', metric: 'points', label: 'Points' },
+    { col: 'points', metric: 'points', label: 'Points', max: 'max_points' },
     { col: 'prng', metric: 'prng', label: 'PRNG' },
-    { col: 'sessions', metric: 'sessions', label: 'Sessions' },
-    { col: 'anim', metric: 'anim', label: 'Anim' },
+    { col: 'sessions', metric: 'sessions', label: 'Sessions', max: 'total' },
+    { col: 'anim', metric: 'anim', label: 'Anim', max: 'anim_total' },
   ];
+  // Counts are out of a maximum that is the same for every team in a run (the
+  // judge scores all forks on the same sessions), so the header states it once
+  // and each cell's tooltip gives the share. PRNG is published only as a
+  // percentage, with no call counts, so it has no maximum.
+  function groupMax(snap, g, pool) {
+    if (!g.max) return null;
+    for (const r of snap.byTeam.values()) {
+      const v = pooled(r, pool, g.max);
+      if (v != null && !Number.isNaN(v) && v > 0) return v;
+    }
+    return null;
+  }
   const POOL_LABEL = { combined: 'Total', pub: 'Public', held: 'Held-out' };
 
   // Sort keys for the table. Pooled keys follow the Pool switch: with a single
@@ -901,15 +916,15 @@ footer b { color: var(--ink); font-weight: 600; }
   // Names and speed read best ascending; everything else starts highest first.
   const firstDir = (key) => (key === 'team' || key === 'speed' ? 'asc' : 'desc');
   function setSort(key) {
-    const current = sortKey(state.pool === 'combined' ? ['combined', 'pub', 'held'] : [state.pool]);
+    const current = sortKey([state.pool]);
     state.sort = { key, dir: key === current ? (state.sort.dir === 'asc' ? 'desc' : 'asc') : firstDir(key) };
     save();
     renderTable();
     document.querySelector(`#thead button[data-key="${key}"]`)?.focus();
   }
 
-  function renderHead(pools, key) {
-    const th = (label, { cls = '', sortAs, scope = 'col', rowspan, colspan, sr, title } = {}) => {
+  function renderHead(pools, key, snap) {
+    const th = (label, { cls = '', sortAs, scope = 'col', rowspan, colspan, sr, title, denom } = {}) => {
       const el = document.createElement('th');
       el.scope = scope;
       if (cls) el.className = cls;
@@ -927,6 +942,12 @@ footer b { color: var(--ink); font-weight: 600; }
         btn.title = title ?? `Sort by ${label}`;
         btn.addEventListener('click', () => setSort(sortAs));
         btn.append(span);
+        if (denom != null) {
+          const d = document.createElement('span');
+          d.className = 'denom';
+          d.textContent = `/ ${fmtInt(denom)}`;
+          btn.append(d);
+        }
         el.append(btn);
       } else {
         el.append(span);
@@ -944,10 +965,11 @@ footer b { color: var(--ink); font-weight: 600; }
       if (split) {
         top.append(th(g.label, { cls: 'group gstart', scope: 'colgroup', colspan: pools.length }));
         pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], {
+          denom: groupMax(snap, g, pool),
           cls: k === 0 ? 'num gstart' : 'num', sortAs: `${g.col}-${pool}`, title: `Sort by ${g.label}, ${POOL_LABEL[pool].toLowerCase()}`,
         })));
       } else {
-        top.append(th(g.label, { cls: 'num gstart', sortAs: `${g.col}-${pools[0]}` }));
+        top.append(th(g.label, { cls: 'num gstart', sortAs: `${g.col}-${pools[0]}`, denom: groupMax(snap, g, pools[0]) }));
       }
     }
     top.append(
@@ -964,9 +986,9 @@ footer b { color: var(--ink); font-weight: 600; }
     $('st-latest').disabled = state.pinned == null;
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
-    const pools = state.pool === 'combined' ? ['combined', 'pub', 'held'] : [state.pool];
+    const pools = [state.pool];
     const key = sortKey(pools);
-    renderHead(pools, key);
+    renderHead(pools, key, snap);
 
     const entries = [...snap.byTeam.values()].map((r) => ({ r, v: sortValue(r, key) }));
     const dir = state.sort.dir === 'asc' ? 1 : -1;
@@ -1035,6 +1057,8 @@ footer b { color: var(--ink); font-weight: 600; }
         pools.forEach((pool, k) => {
           const v = METRICS[g.metric].value(r, pool);
           const td = cell(v == null || Number.isNaN(v) ? '—' : METRICS[g.metric].fmt(v), sortCls(`${g.col}-${pool}`));
+          const max = groupMax(snap, g, pool);
+          if (max && v != null && !Number.isNaN(v)) td.title = `${fmtInt(v)} of ${fmtInt(max)} (${fmtPct((v / max) * 100)})`;
           if (k === 0) td.classList.add('gstart');
         });
       }
