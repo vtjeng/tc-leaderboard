@@ -8,8 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=VT323&display=swap">
 <style>
-/* Layout: one column read top-down: a terminal-style status line, the filter
-   row, one chart card, then the standings table that the chart scrubs. */
+/* Layout: one column read top-down: the filter row, one chart card, then the
+   standings table that the chart scrubs. */
 :root {
   --bg: #f3f4f1;
   --surface: #fbfbfa;
@@ -92,16 +92,8 @@ h1 {
   text-wrap: balance;
 }
 .dek { color: var(--ink-2); }
-.status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.2rem 1.25rem;
-  font: 400 var(--step--1)/1.4 var(--font-data);
-  color: var(--ink-2);
-}
-.status b { font-weight: 500; color: var(--ink); }
 
-.filters { display: flex; flex-wrap: wrap; gap: 0.9rem 1.75rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.9rem 1.25rem; }
 .seg { display: grid; gap: 0.35rem; min-width: 0; }
 .seg-label, .col-label {
   font: 500 var(--step--2)/1 var(--font-data);
@@ -131,6 +123,7 @@ h1 {
 .opts label:hover span { background: var(--wash); }
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
+.seg-range { margin-left: auto; }
 .seg.is-off { opacity: 0.45; }
 .seg.is-off label { cursor: not-allowed; }
 
@@ -226,6 +219,7 @@ th, td { padding: 0.45rem 0.5rem; text-align: left; white-space: nowrap; border-
 th { font-weight: 500; }
 thead th { vertical-align: bottom; }
 thead th.is-sort .col-label { color: var(--ink); }
+thead th.group { text-align: center; padding-bottom: 0.3rem; }
 td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 td.is-sort { font-weight: 500; }
 td .split { color: var(--muted); font-size: var(--step--2); margin-left: 0.35rem; }
@@ -271,19 +265,9 @@ footer b { color: var(--ink); font-weight: 600; }
   <header>
     <h1>Teleport Leaderboard History</h1>
     <p class="dek">Unofficial history of the <a href="https://mazesofmenace.ai/leaderboard/">Teleport Coding Challenge leaderboard</a>, rebuilt from <a href="https://github.com/davidbau/mazesofmenace">the judge's commits</a> since May 5, 2026.</p>
-    <p class="status" id="status" aria-live="polite">Loading&hellip;</p>
   </header>
 
   <div class="filters">
-    <div class="seg" role="radiogroup" aria-labelledby="l-range">
-      <span class="seg-label" id="l-range">Range</span>
-      <div class="opts">
-        <label><input type="radio" name="range" id="range-all" value="all"><span>All</span></label>
-        <label><input type="radio" name="range" id="range-d90" value="d90"><span>90 days</span></label>
-        <label><input type="radio" name="range" id="range-d30" value="d30"><span>30 days</span></label>
-        <label><input type="radio" name="range" id="range-d7" value="d7"><span>7 days</span></label>
-      </div>
-    </div>
     <div class="seg" role="radiogroup" aria-labelledby="l-metric">
       <span class="seg-label" id="l-metric">Metric</span>
       <div class="opts">
@@ -292,8 +276,8 @@ footer b { color: var(--ink); font-weight: 600; }
         <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
         <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
         <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
-        <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup ms</span></label>
-        <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>ms per move</span></label>
+        <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
+        <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
       </div>
     </div>
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
@@ -304,12 +288,21 @@ footer b { color: var(--ink); font-weight: 600; }
         <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
     </div>
+    <div class="seg seg-range" role="radiogroup" aria-labelledby="l-range">
+      <span class="seg-label" id="l-range">Range</span>
+      <div class="opts">
+        <label><input type="radio" name="range" id="range-all" value="all"><span>All</span></label>
+        <label><input type="radio" name="range" id="range-d90" value="d90"><span>90 days</span></label>
+        <label><input type="radio" name="range" id="range-d30" value="d30"><span>30 days</span></label>
+        <label><input type="radio" name="range" id="range-d7" value="d7"><span>7 days</span></label>
+      </div>
+    </div>
   </div>
 
   <section class="card" aria-labelledby="chart-title">
     <div class="card-head">
       <h2 id="chart-title">Points</h2>
-      <p class="sub" id="chart-sub">&nbsp;</p>
+      <p class="sub" id="chart-sub">Loading scoring runs&hellip;</p>
     </div>
     <ul class="legend" id="legend"></ul>
     <div class="chart" id="chart">
@@ -329,17 +322,21 @@ footer b { color: var(--ink); font-weight: 600; }
       <table id="table">
         <thead>
           <tr>
-            <th scope="col"><span class="sr-only">Highlight</span></th>
-            <th scope="col"><span class="col-label">#</span></th>
-            <th scope="col"><span class="col-label">Team</span></th>
-            <th scope="col" class="num" data-col="points"><span class="col-label">Points</span></th>
-            <th scope="col" class="num" data-col="screen"><span class="col-label">Screen</span></th>
-            <th scope="col" class="num" data-col="prng"><span class="col-label">PRNG</span></th>
-            <th scope="col" class="num" data-col="sessions"><span class="col-label">Sessions</span></th>
-            <th scope="col" class="num" data-col="anim"><span class="col-label">Anim</span></th>
-            <th scope="col" class="num" data-col="speed"><span class="col-label">Speed</span></th>
-            <th scope="col"><span class="col-label">Playable</span></th>
-            <th scope="col" class="num" data-col="change"><span class="col-label">Change</span></th>
+            <th scope="col" rowspan="2"><span class="sr-only">Highlight</span></th>
+            <th scope="col" rowspan="2"><span class="col-label">#</span></th>
+            <th scope="col" rowspan="2"><span class="col-label">Team</span></th>
+            <th scope="colgroup" colspan="3" class="group" data-col="points"><span class="col-label">Points</span></th>
+            <th scope="col" rowspan="2" class="num" data-col="screen"><span class="col-label">Screen</span></th>
+            <th scope="col" rowspan="2" class="num" data-col="prng"><span class="col-label">PRNG</span></th>
+            <th scope="col" rowspan="2" class="num" data-col="sessions"><span class="col-label">Sessions</span></th>
+            <th scope="col" rowspan="2" class="num" data-col="anim"><span class="col-label">Anim</span></th>
+            <th scope="col" rowspan="2" class="num" data-col="speed"><span class="col-label">Speed</span></th>
+            <th scope="col" rowspan="2"><span class="col-label">Playable</span></th>
+          </tr>
+          <tr>
+            <th scope="col" class="num" data-col="points-combined"><span class="col-label">Total</span></th>
+            <th scope="col" class="num" data-col="points-pub"><span class="col-label">Public</span></th>
+            <th scope="col" class="num" data-col="points-held"><span class="col-label">Held-out</span></th>
           </tr>
         </thead>
         <tbody id="tbody"></tbody>
@@ -392,15 +389,14 @@ footer b { color: var(--ink); font-weight: 600; }
     return (r.pub_rng_pct * pm + (r.held_rng_pct ?? 0) * hm) / (pm + hm);
   }
 
-  const signed = (f) => (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + f(Math.abs(v));
   const METRICS = {
-    points: { title: 'Points', col: 'points', pooled: true, fmt: fmtInt, delta: signed(fmtInt), value: (r, p) => pooled(r, p, 'points') },
-    screen: { title: 'Screen match', col: 'screen', pooled: true, fmt: fmtPct, delta: signed((v) => v.toFixed(1) + ' pp'), domain: [0, 100], tick: (v) => v + '%', value: screenPct },
-    prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPct, delta: signed((v) => v.toFixed(1) + ' pp'), domain: [0, 100], tick: (v) => v + '%', value: prngPct },
-    sessions: { title: 'Sessions matched', col: 'sessions', pooled: true, fmt: fmtInt, delta: signed(fmtInt), value: (r, p) => pooled(r, p, 'passing') },
-    anim: { title: 'Animation frames matched', col: 'anim', pooled: true, fmt: fmtInt, delta: signed(fmtInt), value: (r, p) => pooled(r, p, 'anim_matched') },
-    startup: { title: 'Startup time', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => fmtInt(Math.round(v)) + ' ms', delta: signed((v) => fmtInt(Math.round(v)) + ' ms'), tick: (v) => fmtInt(v), value: (r) => r.speed_startup_ms },
-    permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', delta: signed((v) => v.toFixed(2) + ' ms'), tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
+    points: { title: 'Points', col: 'points', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'points') },
+    screen: { title: 'Screen match', col: 'screen', pooled: true, fmt: fmtPct, domain: [0, 100], tick: (v) => v + '%', value: screenPct },
+    prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPct, domain: [0, 100], tick: (v) => v + '%', value: prngPct },
+    sessions: { title: 'Sessions matched', col: 'sessions', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'passing') },
+    anim: { title: 'Animation frames matched', col: 'anim', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'anim_matched') },
+    startup: { title: 'Startup time', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => fmtInt(Math.round(v)) + ' ms', tick: (v) => fmtInt(v), value: (r) => r.speed_startup_ms },
+    permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
   };
   const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
   const RANGE_DAYS = { all: null, d90: 90, d30: 30, d7: 7 };
@@ -522,6 +518,29 @@ footer b { color: var(--ink); font-weight: 600; }
     ul.append(others, count);
   }
 
+  // d3's default time format mixes "Mon 31" with "September", and the mixed
+  // widths collide. Use one interval and one format per chart instead, with
+  // ticks at least X_TICK_MIN_PX apart; the widest label ("Sep 29") is ~45px.
+  const X_TICK_MIN_PX = 70;
+  // d3.timeDay.every(n) restarts at each month, which puts Aug 31 next to
+  // Sep 1; counting days from a fixed origin keeps the spacing even.
+  const DAY_ORIGIN = new Date(2000, 0, 1);
+  const everyNDays = (n) => d3.timeDay.filter((d) => d3.timeDay.count(DAY_ORIGIN, d) % n === 0);
+  const X_INTERVALS = [
+    [1, d3.timeDay, '%b %-d'],
+    [2, everyNDays(2), '%b %-d'],
+    [3, everyNDays(3), '%b %-d'],
+    [7, d3.timeMonday, '%b %-d'],
+    [14, d3.timeMonday.every(2), '%b %-d'],
+    [31, d3.timeMonth, '%b'],
+    [62, d3.timeMonth.every(2), '%b'],
+  ];
+  function timeTicks(spanMs, widthPx) {
+    const daysPerTick = spanMs / DAY_MS / Math.max(1, Math.floor(widthPx / X_TICK_MIN_PX));
+    const [, interval, fmt] = X_INTERVALS.find(([days]) => daysPerTick <= days) ?? X_INTERVALS[X_INTERVALS.length - 1];
+    return [interval, d3.timeFormat(fmt)];
+  }
+
   function renderChart() {
     const m = view.metric;
     $('chart-title').textContent = m.title;
@@ -553,10 +572,10 @@ footer b { color: var(--ink); font-weight: 600; }
     g.append('g').selectAll('text').data(yTicks).join('text')
       .attr('x', margin.left - 8).attr('y', (d) => y(d)).attr('dy', '0.32em')
       .attr('text-anchor', 'end').text(tickFmt);
-    const xTicks = x.ticks(Math.max(3, Math.floor((W - margin.left - margin.right) / 90)));
-    g.append('g').selectAll('text').data(xTicks).join('text')
+    const [xInterval, xFormat] = timeTicks(view.t1 - view.t0, W - margin.left - margin.right);
+    g.append('g').selectAll('text').data(x.ticks(xInterval)).join('text')
       .attr('x', (d) => x(d)).attr('y', H - margin.bottom + 18)
-      .attr('text-anchor', 'middle').text(x.tickFormat());
+      .attr('text-anchor', 'middle').text(xFormat);
 
     if (state.pinned != null) {
       const px = x(snapshots[state.pinned].t);
@@ -658,20 +677,16 @@ footer b { color: var(--ink); font-weight: 600; }
     const idx = state.pinned ?? snapshots.length - 1;
     const snap = snapshots[idx];
     const m = view.metric;
-    const vi = idx - view.i0;
     $('st-time').textContent = fmtTime.format(snap.t);
     $('st-latest').disabled = state.pinned == null;
-    $('st-sub').textContent = `Ranked by ${m.title.toLowerCase()}${m.pooled ? ` (${POOL_TEXT[state.pool]})` : ''}; change is since ${fmtDay.format(view.t0)}. Select a row to highlight that team in the chart.`;
+    $('st-sub').textContent = `Ranked by ${m.title.toLowerCase()}${m.pooled ? ` (${POOL_TEXT[state.pool]})` : ''}. Select a row to highlight that team in the chart.`;
+    // Points has one column per pool, so the highlighted column follows the pool.
+    const sortCol = m.col === 'points' ? `points-${state.pool}` : m.col;
     document.querySelectorAll('thead th[data-col]').forEach((th) => {
-      th.classList.toggle('is-sort', th.dataset.col === m.col);
+      th.classList.toggle('is-sort', th.dataset.col === sortCol || th.dataset.col === m.col);
     });
 
-    const entries = [...snap.byTeam.values()].map((r) => {
-      const v = m.value(r, state.pool);
-      const pts = view.series.get(r.team);
-      const first = pts?.slice(0, vi + 1).find((p) => p.v != null);
-      return { r, v, change: v != null && first ? v - first.v : null };
-    });
+    const entries = [...snap.byTeam.values()].map((r) => ({ r, v: m.value(r, state.pool) }));
     const dir = m.lowerIsBetter ? 1 : -1;
     entries.sort((a, b) => {
       if (a.v == null || b.v == null) return (a.v == null) - (b.v == null);
@@ -681,7 +696,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const tbody = $('tbody');
     tbody.replaceChildren();
     const full = state.highlight.size >= MAX_HIGHLIGHT;
-    entries.forEach(({ r, v, change }, i) => {
+    entries.forEach(({ r, v }, i) => {
       const tr = document.createElement('tr');
       const slot = state.highlight.get(r.team);
       const cell = (text, cls) => {
@@ -714,7 +729,7 @@ footer b { color: var(--ink); font-weight: 600; }
         cat.textContent = r.category;
         teamTd.append(cat);
       }
-      const sortCls = (col) => (col === m.col ? 'num is-sort' : 'num');
+      const sortCls = (col) => (col === sortCol ? 'num is-sort' : 'num');
       const withSplit = (td, a, b) => {
         if (a == null) return;
         const split = document.createElement('span');
@@ -723,7 +738,9 @@ footer b { color: var(--ink); font-weight: 600; }
         td.append(split);
       };
       const totalPts = pooled(r, 'combined', 'points');
-      withSplit(cell(totalPts == null ? '—' : fmtInt(totalPts), sortCls('points')), r.pub_points, r.held_points);
+      cell(totalPts == null ? '—' : fmtInt(totalPts), sortCls('points-combined'));
+      cell(r.pub_points == null ? '—' : fmtInt(r.pub_points), sortCls('points-pub'));
+      cell(r.held_points == null ? '—' : fmtInt(r.held_points), sortCls('points-held'));
       const scr = screenPct(r, 'combined');
       cell(scr == null ? '—' : fmtPct(scr), sortCls('screen'));
       const prng = prngPct(r, 'combined');
@@ -748,7 +765,6 @@ footer b { color: var(--ink); font-weight: 600; }
       } else {
         playTd.textContent = '—';
       }
-      cell(change == null ? '—' : m.delta(change), 'num');
       tr.addEventListener('click', (e) => {
         if (e.target.closest('button') && e.target.closest('button') !== key) return;
         if (key.disabled) return;
@@ -756,26 +772,6 @@ footer b { color: var(--ink); font-weight: 600; }
       });
       tbody.append(tr);
     });
-  }
-
-  function renderStatus() {
-    const last = snapshots[snapshots.length - 1];
-    const latestRows = [...last.byTeam.values()];
-    const maxPts = d3.max(latestRows, (r) => pooled(r, 'combined', 'max_points'));
-    const parts = [
-      ['Runs', fmtInt(snapshots.length)],
-      ['Teams', fmtInt(latestRows.length)],
-      ['Max', `${fmtInt(maxPts)} pts`],
-      ['Latest', fmtTime.format(last.t)],
-    ];
-    const el = $('status');
-    el.replaceChildren(...parts.map(([k, v]) => {
-      const span = document.createElement('span');
-      const b = document.createElement('b');
-      b.textContent = v;
-      span.append(`${k}:`, b);
-      return span;
-    }));
   }
 
   function renderAll() {
@@ -840,7 +836,7 @@ footer b { color: var(--ink); font-weight: 600; }
     try {
       rows = await d3.csv(CSV_URL, d3.autoType);
     } catch (err) {
-      $('status').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
+      $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
       return;
     }
     const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
@@ -853,7 +849,6 @@ footer b { color: var(--ink); font-weight: 600; }
       latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
-    renderStatus();
     renderAll();
   }
 
