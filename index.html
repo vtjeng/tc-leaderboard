@@ -152,8 +152,6 @@ h1 {
 }
 .select-wrap select:hover { background: var(--wash); }
 .select-wrap select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-.seg.is-off { opacity: 0.45; }
-.seg.is-off label { cursor: not-allowed; }
 
 .card {
   background: var(--surface);
@@ -254,11 +252,11 @@ thead th { vertical-align: bottom; }
 thead th.is-sort .col-label { color: var(--ink); }
 thead th[data-dir] .col-label::after { content: "\2009\25BE"; }
 thead th[data-dir="asc"] .col-label::after { content: "\2009\25B4"; }
-thead th .col-pool { display: block; font: 400 var(--step--2)/1.2 var(--font-body); color: var(--muted); text-transform: none; letter-spacing: 0; }
+
 thead th.group { text-align: center; padding-bottom: 0.3rem; }
 td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
 td.is-sort { font-weight: 500; }
-td .split { color: var(--muted); font-size: var(--step--2); margin-left: 0.35rem; }
+th.gstart, td.gstart { border-left: 1px solid var(--hairline); }
 td.rank { color: var(--muted); width: 2.5rem; }
 td.team { font-family: var(--font-body); }
 td.team .cat { color: var(--muted); font-size: var(--step--2); margin-left: 0.4rem; }
@@ -309,7 +307,6 @@ footer b { color: var(--ink); font-weight: 600; }
       <span class="seg-label" id="l-metric">Metric</span>
       <div class="opts">
         <label><input type="radio" name="metric" id="metric-points" value="points"><span>Points</span></label>
-        <label><input type="radio" name="metric" id="metric-screen" value="screen"><span>Screen</span></label>
         <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
         <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
         <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
@@ -318,7 +315,7 @@ footer b { color: var(--ink); font-weight: 600; }
       </div>
     </div>
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
-      <span class="seg-label" id="l-pool">Sessions pool</span>
+      <span class="seg-label" id="l-pool">Pool</span>
       <div class="opts">
         <label><input type="radio" name="pool" id="pool-combined" value="combined"><span>Both</span></label>
         <label><input type="radio" name="pool" id="pool-pub" value="pub"><span>Public</span></label>
@@ -363,25 +360,7 @@ footer b { color: var(--ink); font-weight: 600; }
     <p class="sub" id="st-sub">&nbsp;</p>
     <div class="table-scroll">
       <table id="table">
-        <thead>
-          <tr>
-            <th scope="col" rowspan="2"><span class="sr-only">Highlight</span></th>
-            <th scope="col" rowspan="2"><span class="col-label">#</span></th>
-            <th scope="col" rowspan="2"><span class="col-label">Team</span></th>
-            <th scope="colgroup" colspan="3" class="group" data-col="points"><span class="col-label">Points</span></th>
-            <th scope="col" rowspan="2" class="num" data-col="screen"><span class="col-label">Screen</span></th>
-            <th scope="col" rowspan="2" class="num" data-col="prng"><span class="col-label">PRNG</span></th>
-            <th scope="col" rowspan="2" class="num" data-col="sessions"><span class="col-label">Sessions</span></th>
-            <th scope="col" rowspan="2" class="num" data-col="anim"><span class="col-label">Anim</span></th>
-            <th scope="col" rowspan="2" class="num" data-col="speed"><span class="col-label">Speed</span></th>
-            <th scope="col" rowspan="2"><span class="col-label">Playable</span></th>
-          </tr>
-          <tr>
-            <th scope="col" class="num" data-col="points-combined"><span class="col-label">Total</span></th>
-            <th scope="col" class="num" data-col="points-pub"><span class="col-label">Public</span></th>
-            <th scope="col" class="num" data-col="points-held"><span class="col-label">Held-out</span></th>
-          </tr>
-        </thead>
+        <thead id="thead"></thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
@@ -390,14 +369,14 @@ footer b { color: var(--ink); font-weight: 600; }
   <footer>
     <ul>
       <li><b>Points</b> count matched 80&times;24 screens: one point per recorded step where the port's render matches C exactly.</li>
-      <li><b>Screen</b> is points as a share of the maximum.</li>
       <li><b>PRNG</b> is the share of matched random-number calls. With both pools selected, each pool is weighted by its maximum points, as on the leaderboard.</li>
       <li><b>Sessions</b> counts sessions matched end to end.</li>
-      <li><b>Sessions pool</b> selects the 44 public sessions, the 44 held-out sessions, or both.</li>
+      <li><b>Pool</b> applies to the whole page. Both shows Points, PRNG, Sessions and Anim as a total plus the 44 public and 44 held-out sessions; Public or Held-out narrows the chart and table to that pool.</li>
       <li><b>Anim</b> counts matched animation frames.</li>
-      <li><b>Startup</b> and <b>Per move</b> are the two terms of the judge's linear speed fit, startup_ms + per_move_ms &times; moves. The table's Speed column shows both.</li>
+      <li><b>Startup</b> and <b>Per move</b> are the two terms of the judge's linear speed fit, startup_ms + per_move_ms &times; moves, which is not split by pool. The table's Speed column shows both.</li>
       <li><b>Playable</b> is the judge's browser check: the build loads in headless Chromium without errors and stays under the judge's time limit per move.</li>
       <li>Anim, Startup, Per move and Playable do not count toward the leaderboard's ranking.</li>
+      <li>Screen match is not shown: every team has the same maximum points in each run, so it would rank exactly like points.</li>
       <li>The chart starts at the judge's <a href="https://github.com/davidbau/mazesofmenace/blob/ab5732da9dfdb991cfdaaefc6198751b689b0114/leaderboard/index.html#L532-L542">scoring-rule change on May 5, 2026, 23:55 UTC</a>, as the leaderboard's own sparkline does. The two earlier scoring schemes produced point totals that are not comparable.</li>
       <li>When the judge cannot score a fork, that run carries the fork's last good numbers.</li>
     </ul>
@@ -430,10 +409,6 @@ footer b { color: var(--ink); font-weight: 600; }
     const pub = r[`pub_${field}`];
     return pub == null ? null : pub + (r[`held_${field}`] ?? 0);
   }
-  function screenPct(r, pool) {
-    const max = pooled(r, pool, 'max_points');
-    return max ? (pooled(r, pool, 'points') / max) * 100 : null;
-  }
   function prngPct(r, pool) {
     if (pool !== 'combined') return r[`${pool}_rng_pct`];
     const pm = r.pub_max_points ?? 0;
@@ -444,7 +419,6 @@ footer b { color: var(--ink); font-weight: 600; }
 
   const METRICS = {
     points: { title: 'Points', col: 'points', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'points') },
-    screen: { title: 'Screen match', col: 'screen', pooled: true, fmt: fmtPct, domain: [0, 100], tick: (v) => v + '%', value: screenPct },
     prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPct, domain: [0, 100], tick: (v) => v + '%', value: prngPct },
     sessions: { title: 'Sessions matched', col: 'sessions', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'passing') },
     anim: { title: 'Animation frames matched', col: 'anim', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'anim_matched') },
@@ -566,9 +540,6 @@ footer b { color: var(--ink); font-weight: 600; }
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
     $('range').value = state.range;
-    const poolOff = !view.metric.pooled;
-    $('pool-seg').classList.toggle('is-off', poolOff);
-    document.querySelectorAll('input[name="pool"]').forEach((el) => { el.disabled = poolOff; });
   }
 
   function renderLegend() {
@@ -831,6 +802,41 @@ footer b { color: var(--ink); font-weight: 600; }
     tip.hidden = true;
   }
 
+  const TABLE_GROUPS = [
+    { col: 'points', metric: 'points', label: 'Points' },
+    { col: 'prng', metric: 'prng', label: 'PRNG' },
+    { col: 'sessions', metric: 'sessions', label: 'Sessions' },
+    { col: 'anim', metric: 'anim', label: 'Anim' },
+  ];
+  const POOL_LABEL = { combined: 'Total', pub: 'Public', held: 'Held-out' };
+
+  function renderHead(pools, sortCol, groupCol) {
+    const th = (label, { cls = '', col, scope = 'col', rowspan, colspan, sr } = {}) => {
+      const el = document.createElement('th');
+      el.scope = scope;
+      if (cls) el.className = cls;
+      if (rowspan) el.rowSpan = rowspan;
+      if (colspan) el.colSpan = colspan;
+      if (col && (col === sortCol || col === groupCol)) el.classList.add('is-sort');
+      // The arrow marks the one column the rows are ordered by.
+      if (col && col === sortCol) el.dataset.dir = view.metric.lowerIsBetter ? 'asc' : 'desc';
+      const span = document.createElement('span');
+      span.className = sr ? 'sr-only' : 'col-label';
+      span.textContent = label;
+      el.append(span);
+      return el;
+    };
+    const top = document.createElement('tr');
+    const sub = document.createElement('tr');
+    top.append(th('Highlight', { rowspan: 2, sr: true }), th('#', { rowspan: 2 }), th('Team', { rowspan: 2 }));
+    for (const g of TABLE_GROUPS) {
+      top.append(th(g.label, { cls: 'group gstart', col: g.col, scope: 'colgroup', colspan: pools.length }));
+      pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], { cls: k === 0 ? 'num gstart' : 'num', col: `${g.col}-${pool}` })));
+    }
+    top.append(th('Speed', { cls: 'num gstart', col: 'speed', rowspan: 2 }), th('Playable', { rowspan: 2 }));
+    $('thead').replaceChildren(top, sub);
+  }
+
   function renderTable() {
     const idx = state.pinned ?? snapshots.length - 1;
     const snap = snapshots[idx];
@@ -838,24 +844,11 @@ footer b { color: var(--ink); font-weight: 600; }
     $('st-time').textContent = fmtTime.format(snap.t);
     $('st-latest').disabled = state.pinned == null;
     $('st-sub').textContent = `Ranked by ${inSentence(m.title)}${m.pooled ? ` on ${POOL_TEXT[state.pool]}` : ''}, ${m.lowerIsBetter ? 'lowest' : 'highest'} first. Select a row to highlight that team in the chart.`;
-    // Points has one column per pool, so the ranked column follows the pool.
-    // The other pooled columns show combined values, except the ranked one,
-    // which shows the pool it is ranked on so the order matches the numbers.
-    const sortCol = m.col === 'points' ? `points-${state.pool}` : m.col;
-    const colPool = (col) => (col === sortCol && m.pooled && m.col !== 'points' ? state.pool : 'combined');
-    document.querySelectorAll('thead th[data-col]').forEach((th) => {
-      const col = th.dataset.col;
-      th.classList.toggle('is-sort', col === sortCol || col === m.col);
-      if (col === sortCol) th.dataset.dir = m.lowerIsBetter ? 'asc' : 'desc';
-      else delete th.dataset.dir;
-      th.querySelector('.col-pool')?.remove();
-      if (colPool(col) !== 'combined') {
-        const note = document.createElement('span');
-        note.className = 'col-pool';
-        note.textContent = state.pool === 'pub' ? 'public' : 'held-out';
-        th.append(note);
-      }
-    });
+    // The pool switch drives the whole board: "Both" shows Total, Public and
+    // Held-out under each pooled metric; a single pool shows just that pool.
+    const pools = state.pool === 'combined' ? ['combined', 'pub', 'held'] : [state.pool];
+    const sortCol = m.pooled ? `${m.col}-${state.pool}` : m.col;
+    renderHead(pools, sortCol, m.col);
 
     const entries = [...snap.byTeam.values()].map((r) => ({ r, v: m.value(r, state.pool) }));
     const dir = m.lowerIsBetter ? 1 : -1;
@@ -901,28 +894,15 @@ footer b { color: var(--ink); font-weight: 600; }
         teamTd.append(cat);
       }
       const sortCls = (col) => (col === sortCol ? 'num is-sort' : 'num');
-      const withSplit = (td, a, b) => {
-        if (a == null) return;
-        const split = document.createElement('span');
-        split.className = 'split';
-        split.textContent = `${fmtInt(a)} + ${fmtInt(b ?? 0)}`;
-        td.append(split);
-      };
-      const totalPts = pooled(r, 'combined', 'points');
-      cell(totalPts == null ? '—' : fmtInt(totalPts), sortCls('points-combined'));
-      cell(r.pub_points == null ? '—' : fmtInt(r.pub_points), sortCls('points-pub'));
-      cell(r.held_points == null ? '—' : fmtInt(r.held_points), sortCls('points-held'));
-      const scr = screenPct(r, colPool('screen'));
-      cell(scr == null ? '—' : fmtPct(scr), sortCls('screen'));
-      const prng = prngPct(r, colPool('prng'));
-      cell(prng == null ? '—' : fmtPct(prng), sortCls('prng'));
-      const pass = pooled(r, colPool('sessions'), 'passing');
-      const passTd = cell(pass == null ? '—' : fmtInt(pass), sortCls('sessions'));
-      if (colPool('sessions') === 'combined') withSplit(passTd, r.pub_passing, r.held_passing);
-      const anim = pooled(r, colPool('anim'), 'anim_matched');
-      cell(anim == null ? '—' : fmtInt(anim), sortCls('anim'));
+      for (const g of TABLE_GROUPS) {
+        pools.forEach((pool, k) => {
+          const v = METRICS[g.metric].value(r, pool);
+          const td = cell(v == null || Number.isNaN(v) ? '—' : METRICS[g.metric].fmt(v), sortCls(`${g.col}-${pool}`));
+          if (k === 0) td.classList.add('gstart');
+        });
+      }
       cell(r.speed_startup_ms == null ? '—'
-        : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed'));
+        : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed') + ' gstart');
       const playTd = cell(null);
       if (r.playable != null) {
         const span = document.createElement('span');
