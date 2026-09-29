@@ -217,7 +217,6 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 }
 .chip .x { color: var(--muted); font-size: 1.1em; line-height: 1; }
 .legend .others { display: inline-flex; align-items: center; gap: 0.45rem; color: var(--ink-2); padding-inline: 0.4rem; }
-.legend .count { color: var(--muted); font-family: var(--font-data); font-size: var(--step--2); margin-left: auto; }
 .linekey { display: inline-block; width: 14px; height: 2px; border-radius: 1px; background: var(--c); flex: none; }
 
 .chart { position: relative; min-width: 0; }
@@ -254,8 +253,7 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 .mini .shade { fill: var(--bg); fill-opacity: 0.7; pointer-events: none; }
 .mini .grip rect { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1; }
 .mini .grip line { stroke: var(--ink-2); stroke-width: 1; }
-.mini .grip, .mini .move-hint { pointer-events: none; }
-.mini .move-hint { fill: var(--ink-2); font-size: 10px; }
+.mini .grip { pointer-events: none; }
 
 .standings { display: grid; gap: 0.6rem; min-width: 0; }
 .st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline; justify-content: space-between; }
@@ -322,7 +320,8 @@ tbody tr:hover { background: var(--wash); }
   border: 1.5px solid var(--axis);
 }
 .key[aria-pressed="true"] .dot { background: var(--c); border-color: var(--c); }
-.key:disabled { cursor: not-allowed; opacity: 0.5; }
+.key[aria-disabled="true"] { cursor: not-allowed; opacity: 0.5; }
+tbody tr.is-blocked { cursor: not-allowed; }
 .play { display: inline-flex; gap: 0.3rem; align-items: center; }
 .play .icon { font-weight: 700; }
 .play.ok .icon { color: var(--good); }
@@ -622,10 +621,7 @@ footer b { color: var(--ink); font-weight: 600; }
     key.className = 'linekey';
     key.style.setProperty('--c', 'var(--context)');
     others.append(key, document.createTextNode('Other teams'));
-    const count = document.createElement('li');
-    count.className = 'count';
-    count.textContent = `${state.highlight.size} of ${MAX_HIGHLIGHT} highlighted`;
-    ul.append(others, count);
+    ul.append(others);
   }
 
   // d3's default time format mixes "Mon 31" with "September", and the mixed
@@ -776,16 +772,14 @@ footer b { color: var(--ink); font-weight: 600; }
       .on('brush end', (e) => { decorate(e.selection); onBrush(e); });
     const brushG = g.append('g').attr('class', 'brush').call(brush);
 
-    // Grips on both edges (resize) and a ⟷ glyph in the middle (move). They
-    // sit on top of d3's own handles and ignore the pointer, so dragging still
-    // goes to the brush underneath.
+    // Grips on both edges (resize); the window itself shows a grab cursor
+    // (move). The grips sit on top of d3's own handles and ignore the pointer,
+    // so dragging still goes to the brush underneath.
     const gripH = Math.min(26, bottom - top - 6);
     const grips = brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
     grips.append('rect').attr('x', -4).attr('y', -gripH / 2).attr('width', 8).attr('height', gripH).attr('rx', 3);
     grips.selectAll('line').data([-1.5, 1.5]).join('line')
       .attr('x1', (d) => d).attr('x2', (d) => d).attr('y1', -gripH / 4).attr('y2', gripH / 4);
-    const moveHint = brushG.append('text').attr('class', 'move-hint')
-      .attr('text-anchor', 'middle').attr('dy', '0.35em').attr('y', (top + bottom) / 2).text('⟷');
 
     function decorate(sel) {
       const [a, b] = sel ?? [margin.left, margin.left];
@@ -793,7 +787,6 @@ footer b { color: var(--ink); font-weight: 600; }
         .attr('width', (d) => Math.max(0, d === 'left' ? a - margin.left : W - margin.right - b));
       grips.style('display', sel ? null : 'none')
         .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
-      moveHint.attr('x', (a + b) / 2).style('display', sel && b - a > 40 ? null : 'none');
     }
     // A programmatic move has no sourceEvent, so onBrush ignores it.
     brushG.call(brush.move, [x(view.t0), x(view.t1)]);
@@ -1003,9 +996,15 @@ footer b { color: var(--ink); font-weight: 600; }
       key.setAttribute('aria-pressed', String(slot != null));
       key.setAttribute('aria-label', `${slot != null ? 'Remove' : 'Highlight'} ${r.team} in the chart`);
       if (slot != null) key.style.setProperty('--c', `var(--s${slot})`);
-      if (slot == null && full) {
-        key.disabled = true;
-        key.title = `Up to ${MAX_HIGHLIGHT} teams can be highlighted. Remove one first.`;
+      // At the cap, keep the control focusable (aria-disabled rather than
+      // disabled, which suppresses the tooltip in some browsers) and say why.
+      const blocked = slot == null && full;
+      if (blocked) {
+        const why = `The chart has ${MAX_HIGHLIGHT} distinct line colours, so at most ${MAX_HIGHLIGHT} teams can be highlighted at once. Remove a highlighted team (click its row or its chip above the chart) to add this one.`;
+        key.setAttribute('aria-disabled', 'true');
+        key.title = why;
+        tr.title = why;
+        tr.classList.add('is-blocked');
       }
       const dot = document.createElement('span');
       dot.className = 'dot';
@@ -1058,7 +1057,7 @@ footer b { color: var(--ink); font-weight: 600; }
       tr.addEventListener('click', (e) => {
         if (e.target.closest('a')) return;
         if (e.target.closest('button') && e.target.closest('button') !== key) return;
-        if (key.disabled) return;
+        if (blocked) return;
         toggleHighlight(r.team);
       });
       tbody.append(tr);
