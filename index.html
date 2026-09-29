@@ -244,13 +244,14 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 .mini svg { display: block; width: 100%; }
 .mini svg text { font: 400 10px var(--font-data); fill: var(--muted); }
 .mini .overlay { cursor: crosshair; }
-.mini .selection { fill: var(--ink); fill-opacity: 0.1; stroke: var(--ink-2); stroke-width: 1.5; cursor: grab; }
+.mini .selection { fill: var(--ink); fill-opacity: 0.06; stroke: var(--ink-2); stroke-opacity: 0.8; cursor: grab; }
 .mini .brush:active .selection { cursor: grabbing; }
 .mini .handle { cursor: ew-resize; }
-.mini .shade { fill: var(--surface); fill-opacity: 0.7; pointer-events: none; }
-.mini .grip rect { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.25; }
+.mini .shade { fill: var(--bg); fill-opacity: 0.7; pointer-events: none; }
+.mini .grip rect { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1; }
 .mini .grip line { stroke: var(--ink-2); stroke-width: 1; }
-.mini .grip { pointer-events: none; }
+.mini .grip, .mini .move-hint { pointer-events: none; }
+.mini .move-hint { fill: var(--ink-2); font-size: 10px; }
 
 .standings { display: grid; gap: 0.6rem; min-width: 0; }
 .st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline; justify-content: space-between; }
@@ -281,6 +282,9 @@ td.is-sort { font-weight: 500; }
 th.gstart, td.gstart { border-left: 1px solid var(--hairline); }
 td.rank { color: var(--muted); width: 2.5rem; }
 td.team { font-family: var(--font-body); }
+td.team a { text-decoration: none; }
+td.team a:hover { text-decoration: underline; }
+td.team a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
 td.team .cat { color: var(--muted); font-size: var(--step--2); margin-left: 0.4rem; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--wash); }
@@ -369,9 +373,9 @@ footer b { color: var(--ink); font-weight: 600; }
       <div class="tip" id="tip" hidden></div>
     </div>
     <div class="mini" id="mini-wrap">
-      <svg id="mini" role="img" aria-label="Overview of the full history. Drag across it to choose the time window shown above."></svg>
+      <svg id="mini" role="img" aria-label="Overview of the full history. Drag the window to move it, drag its edges to resize it, or drag elsewhere to draw a new one."></svg>
     </div>
-    <p class="hint">Hover to read values. Click the chart, or focus it and use the arrow keys, to show the standings at that run. Drag the window in the overview strip to move it, or drag its edges to resize it.</p>
+    <p class="hint">Hover to read values. Click the chart, or focus it and use the arrow keys, to show the standings at that run. Drag the window in the overview strip to move it, drag its grips to resize it, or drag anywhere else on the strip to draw a new one.</p>
   </section>
 
   <section class="standings" aria-labelledby="st-title">
@@ -666,8 +670,7 @@ footer b { color: var(--ink); font-weight: 600; }
         .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
     }
 
-    // Step after each run: the leaderboard showed a value until the next run.
-    const line = d3.line().curve(d3.curveStepAfter).defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v));
+    const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v)).curve(d3.curveStepAfter);
     const context = [...view.series].filter(([team]) => !state.highlight.has(team));
     const focus = [...view.series].filter(([team]) => state.highlight.has(team));
     g.append('g').selectAll('path').data(context).join('path')
@@ -719,7 +722,7 @@ footer b { color: var(--ink); font-weight: 600; }
     series.forEach((pts) => pts.forEach(({ v }) => { if (v != null && v > hi) hi = v; }));
     const x = d3.scaleTime().domain([snapshots[0].t, snapshots[snapshots.length - 1].t]).range([margin.left, W - margin.right]);
     const y = d3.scaleLinear().domain(m.domain ?? [0, hi || 1]).range([H - margin.bottom, margin.top]);
-    const line = d3.line().curve(d3.curveStepAfter).defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v));
+    const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v)).curve(d3.curveStepAfter);
 
     const g = miniSvg.append('g');
     g.append('line')
@@ -737,38 +740,44 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
       .style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`).attr('stroke-width', 1.25);
 
-    // Shading outside the window and a grip on each edge show that the
-    // window can be dragged and resized; d3's own handles take the input.
+    // Dim the history outside the window so the window reads as a lens.
     const top = margin.top;
     const bottom = H - margin.bottom;
-    const shade = g.append('g');
-    const shadeL = shade.append('rect').attr('class', 'shade').attr('y', top).attr('height', bottom - top);
-    const shadeR = shade.append('rect').attr('class', 'shade').attr('y', top).attr('height', bottom - top);
+    const shade = g.append('g').selectAll('rect').data(['left', 'right']).join('rect')
+      .attr('class', 'shade').attr('y', top).attr('height', bottom - top);
+
     const brush = d3.brushX()
       .extent([[margin.left, top], [W - margin.right, bottom]])
       .handleSize(14)
-      .on('brush end', onBrush);
+      .on('brush end', (e) => { decorate(e.selection); onBrush(e); });
     const brushG = g.append('g').attr('class', 'brush').call(brush);
-    const gripH = 22;
-    const grips = g.append('g').selectAll('g').data([0, 1]).join('g').attr('class', 'grip');
+
+    // Grips on both edges (resize) and a ⟷ glyph in the middle (move). They
+    // sit on top of d3's own handles and ignore the pointer, so dragging still
+    // goes to the brush underneath.
+    const gripH = Math.min(26, bottom - top - 6);
+    const grips = brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
     grips.append('rect').attr('x', -4).attr('y', -gripH / 2).attr('width', 8).attr('height', gripH).attr('rx', 3);
     grips.selectAll('line').data([-1.5, 1.5]).join('line')
-      .attr('x1', (d) => d).attr('x2', (d) => d).attr('y1', -5).attr('y2', 5);
-    const drawWindow = ([a, b]) => {
-      shadeL.attr('x', margin.left).attr('width', Math.max(0, a - margin.left));
-      shadeR.attr('x', b).attr('width', Math.max(0, W - margin.right - b));
-      grips.attr('transform', (d) => `translate(${d ? b : a},${(top + bottom) / 2})`);
-    };
-    mini = { x, drawWindow };
-    // A programmatic move has no sourceEvent, so onBrush only redraws the
-    // window decorations for it.
+      .attr('x1', (d) => d).attr('x2', (d) => d).attr('y1', -gripH / 4).attr('y2', gripH / 4);
+    const moveHint = brushG.append('text').attr('class', 'move-hint')
+      .attr('text-anchor', 'middle').attr('dy', '0.35em').attr('y', (top + bottom) / 2).text('⟷');
+
+    function decorate(sel) {
+      const [a, b] = sel ?? [margin.left, margin.left];
+      shade.attr('x', (d) => (d === 'left' ? margin.left : b))
+        .attr('width', (d) => Math.max(0, d === 'left' ? a - margin.left : W - margin.right - b));
+      grips.style('display', sel ? null : 'none')
+        .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
+      moveHint.attr('x', (a + b) / 2).style('display', sel && b - a > 40 ? null : 'none');
+    }
+    // A programmatic move has no sourceEvent, so onBrush ignores it.
     brushG.call(brush.move, [x(view.t0), x(view.t1)]);
+    mini = { x };
   }
 
   function onBrush({ selection, sourceEvent, type }) {
-    if (!mini) return;
-    if (selection) mini.drawWindow(selection);
-    if (!sourceEvent) return;
+    if (!sourceEvent || !mini) return;
     hideHover();
     if (!selection) {
       // A click on the strip without a drag clears the window: show everything.
@@ -939,12 +948,18 @@ footer b { color: var(--ink); font-weight: 600; }
       keyTd.append(key);
       cell(v == null ? '' : String(i + 1), 'rank num');
       const teamTd = cell(null, 'team');
-      const link = document.createElement('a');
-      link.href = `https://github.com/${r.fork}`;
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = r.team;
-      teamTd.append(link);
+      // Each team name links to the fork the judge scores.
+      if (typeof r.fork === 'string' && /^[\w.-]+\/[\w.-]+$/.test(r.fork)) {
+        const a = document.createElement('a');
+        a.href = `https://github.com/${r.fork}`;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.title = `${r.fork} on GitHub`;
+        a.textContent = r.team;
+        teamTd.append(a);
+      } else {
+        teamTd.textContent = r.team;
+      }
       if (r.category && r.category !== 'none') {
         const cat = document.createElement('span');
         cat.className = 'cat';
@@ -1017,6 +1032,10 @@ footer b { color: var(--ink); font-weight: 600; }
       renderAll();
     });
     $('st-latest').addEventListener('click', () => pin(null));
+    // Shadow under the frozen filter bar only once the header has scrolled away.
+    const filters = document.querySelector('.filters');
+    new IntersectionObserver(([e]) => filters.classList.toggle('is-stuck', !e.isIntersecting))
+      .observe(document.querySelector('header'));
     const node = svg.node();
     node.addEventListener('pointermove', (e) => {
       if (!chart) return;
@@ -1042,10 +1061,6 @@ footer b { color: var(--ink); font-weight: 600; }
       showHover(vi);
     });
     node.addEventListener('blur', hideHover);
-    // Shadow under the frozen filter bar only once the header has scrolled away.
-    const filters = document.querySelector('.filters');
-    new IntersectionObserver(([e]) => filters.classList.toggle('is-stuck', !e.isIntersecting))
-      .observe(document.querySelector('header'));
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
