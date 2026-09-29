@@ -37,10 +37,15 @@ The CSV stores the fields the leaderboard computes its columns from:
 Floats are rounded to four decimal places. A field is empty in runs from before
 the judge added it.
 
+A GitHub Actions workflow, `.github/workflows/update.yml`, runs the script
+every hour and commits the CSV when a new run has arrived.
+
 ## Dashboard
 
-`index.html` loads the CSV and charts one metric per team over time. To view
-it, serve this folder over HTTP and open <http://localhost:8000/>:
+`index.html` loads the CSV and charts one metric per team over time. The same
+workflow deploys it to <https://vtjeng.github.io/tc-leaderboard/> on every data
+update and every push to `main`. To view it locally, serve this folder over
+HTTP and open <http://localhost:8000/>:
 
 ```sh
 python3 -m http.server

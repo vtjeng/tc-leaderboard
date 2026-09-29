@@ -1,0 +1,60 @@
+name: Update data and deploy
+
+on:
+  schedule:
+    # Hourly. The judge publishes a new run about every six hours, so the
+    # dashboard lags the leaderboard by at most an hour.
+    - cron: "23 * * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 update_data.py
+      - id: commit
+        name: Commit the CSV if it changed
+        run: |
+          git add data/leaderboard.csv
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest=$(tail -n 1 data/leaderboard.csv | cut -d, -f1)
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -m "Update data through the $latest run"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Assemble the site
+        run: mkdir -p _site/data && cp index.html _site/ && cp data/leaderboard.csv _site/data/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: update
+    # Scheduled runs redeploy only when a new judge run arrived; pushes and
+    # manual runs always redeploy, so dashboard changes go out.
+    if: github.event_name != 'schedule' || needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v5
