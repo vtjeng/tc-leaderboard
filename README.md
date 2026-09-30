@@ -38,7 +38,9 @@ Floats are rounded to four decimal places. A field is empty in runs from before
 the judge added it.
 
 A GitHub Actions workflow, `.github/workflows/update.yml`, runs the script
-every hour and commits the CSV when a new run has arrived.
+every 15 minutes and commits the CSV when a new run has arrived. GitHub runs
+scheduled workflows on a best-effort basis and sometimes skips them; to update
+immediately, run `gh workflow run update.yml`.
 
 ## Dashboard
 

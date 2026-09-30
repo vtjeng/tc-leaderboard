@@ -1163,10 +1163,10 @@ footer b { color: var(--ink); font-weight: 600; }
     }).observe(chartEl);
   }
 
-  // The workflow looks for a new judge run every hour, so an open page
-  // re-reads the CSV on the same cadence. It redraws only when a new run has
-  // arrived, which keeps the reader's metric, window, highlights and pinned
-  // run in place.
+  // The workflow looks for a new judge run every 15 minutes, and an open page
+  // re-reads the CSV every hour. It redraws only when a new run has arrived,
+  // which keeps the reader's metric, window, highlights and pinned run in
+  // place.
   const REFRESH_MS = 60 * 60 * 1000;
 
   async function loadSnapshots() {

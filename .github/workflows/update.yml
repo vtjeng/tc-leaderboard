@@ -2,9 +2,11 @@ name: Update data and deploy
 
 on:
   schedule:
-    # Hourly. The judge publishes a new run about every six hours, so the
-    # dashboard lags the leaderboard by at most an hour.
-    - cron: "23 * * * *"
+    # Every 15 minutes, off the hour. GitHub runs scheduled workflows on a
+    # best-effort basis and skipped 5 of the first 6 hourly slots, so more
+    # slots make a long gap less likely. A run that finds no new judge run
+    # commits nothing and does not redeploy.
+    - cron: "7,22,37,52 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
