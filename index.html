@@ -1043,7 +1043,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const margin = { top: 4, right: 14, bottom: 18, left: 52 };
     miniSvg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
     miniSvg.selectAll('*').remove();
-    drag = null; // the old brush, and any drag on it, are gone
+    if (drag) drag.orphan = true; // the brush being dragged is gone
 
     const series = new Map();
     snapshots.forEach((s, i) => s.byTeam.forEach((r, team) => {
@@ -1110,23 +1110,27 @@ footer b { color: var(--ink); font-weight: 600; }
   // the window has moved. The pin is judged against the window the drag ends
   // on, not each step.
   let drag = null;
-  let resizePending = false;
-  let refreshPending = false; // a refresh skipped during a drag
+  let pendingSnapshots = null; // data that arrived during a drag
   function onBrush({ selection, sourceEvent, type }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
       drag = { pin: state.pinned, start: selection && [...selection], moved: false };
       return;
     }
-    drag ??= { pin: state.pinned, start: null, moved: false };
+    // No drag, or one on a brush renderMini has since replaced: its events
+    // are ignored until the next drag starts.
+    if (!drag || drag.orphan) {
+      if (type === 'end') endDrag();
+      return;
+    }
     // A click on the strip starts a zero-width selection; it is not a window
     // until the drag widens it, and a drag released that narrow clears it.
     const empty = !selection || selection[1] - selection[0] < 1;
+    // A click's sub-pixel jitter is not a drag either.
+    const still = !empty && !drag.moved && drag.start
+      && Math.abs(drag.start[0] - selection[0]) < 0.5 && Math.abs(drag.start[1] - selection[1]) < 0.5;
     if (type === 'brush') {
-      if (empty) return;
-      // A click's sub-pixel jitter is not a drag.
-      const { start } = drag;
-      if (!drag.moved && start && Math.abs(start[0] - selection[0]) < 0.5 && Math.abs(start[1] - selection[1]) < 0.5) return;
+      if (empty || still) return;
       drag.moved = true;
       setWindow('custom', selection.map((px) => +mini.x.invert(px)));
       const shown = state.pinned;
@@ -1142,32 +1146,26 @@ footer b { color: var(--ink); font-weight: 600; }
       }
       return;
     }
-    const { pin, start, moved } = drag;
-    drag = null;
     hideHover();
-    state.pinned = pin;
-    if (empty) {
-      // A click on the strip outside the window clears it: show everything.
-      setWindow('all');
-      renderAll();
-      commit();
-    } else if (!moved && start && Math.abs(start[0] - selection[0]) < 0.5 && Math.abs(start[1] - selection[1]) < 0.5) {
-      // A click inside the window without dragging leaves it as it was.
-      if (resizePending) renderAll();
-    } else {
-      setWindow('custom', selection.map((px) => +mini.x.invert(px)));
-      if (resizePending) {
-        renderAll();
-      } else {
-        computeView();
-        renderFilters();
-        renderChart();
-        renderTable();
-      }
-      commit();
+    state.pinned = drag.pin;
+    // A click outside the window clears it (show everything); a click inside
+    // leaves it as it was; anything else is the dragged window.
+    if (empty) setWindow('all');
+    else if (!still) setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+    endDrag();
+    if (!still) commit();
+  }
+
+  // The drag is over: redraw everything, which also catches up on a resize,
+  // a slide from a pin made mid-drag, and data that arrived during it.
+  function endDrag() {
+    drag = null;
+    if (pendingSnapshots) {
+      applySnapshots(pendingSnapshots);
+      pendingSnapshots = null;
     }
-    resizePending = false;
-    if (refreshPending) refresh();
+    renderAll();
+    writeUrl();
   }
 
   function nearestIndex(px) {
@@ -1546,11 +1544,9 @@ footer b { color: var(--ink); font-weight: 600; }
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         if (!view) return;
-        // Redrawing the overview mid-drag would cut the drag short; it waits.
-        if (drag) {
-          resizePending = true;
-          return;
-        }
+        // Redrawing the overview mid-drag would cut the drag short; the
+        // drag's end redraws.
+        if (drag) return;
         hideHover();
         renderChart();
         renderMini();
@@ -1586,19 +1582,26 @@ footer b { color: var(--ink); font-weight: 600; }
     $('latest-run').textContent = `${fmtTime.format(latestT)} (${age})`;
   }
 
+  // pinned is an index; find the same run in the new list.
+  function applySnapshots(next) {
+    const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
+    setSnapshots(next);
+    if (pinnedT != null) state.pinned = normalisePin(findRun(pinnedT));
+  }
+
   async function refresh() {
     try {
       const next = await loadSnapshots();
-      // Redrawing the overview would cut a drag short; it waits for the end.
-      refreshPending = Boolean(drag);
-      if (!drag && +next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
-        // pinned is an index; find the same run in the new list.
-        const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
-        setSnapshots(next);
-        if (pinnedT != null) state.pinned = normalisePin(findRun(pinnedT));
-        hideHover();
-        renderAll();
-        writeUrl();
+      if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
+        if (drag) {
+          // Redrawing the overview would cut a drag short; it waits for the end.
+          pendingSnapshots = next;
+        } else {
+          applySnapshots(next);
+          hideHover();
+          renderAll();
+          writeUrl();
+        }
       }
     } catch {
       // Keep showing the data already loaded; the next tick tries again.
