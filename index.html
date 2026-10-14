@@ -528,7 +528,8 @@ footer b { color: var(--ink); font-weight: 600; }
     // Own keys only: a link could otherwise name an inherited one like toString.
     if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
     if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
-        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]) {
+        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
+        && saved.window[1] >= +snapshots[0].t && saved.window[0] <= +snapshots[snapshots.length - 1].t) {
       state.range = 'custom';
       state.window = [...saved.window];
     }
@@ -1100,10 +1101,12 @@ footer b { color: var(--ink); font-weight: 600; }
   let dragPin; // the pinned run when the current drag began
   function onBrush({ selection, sourceEvent, type }) {
     if (!sourceEvent || !mini) return;
-    // A click on the strip starts a zero-width selection; it is not a window.
-    if (selection && selection[1] - selection[0] < 1) return;
+    // A click on the strip starts a zero-width selection; it is not a window
+    // until the drag widens it, and a drag released that narrow clears it.
+    const tiny = selection && selection[1] - selection[0] < 1;
+    if (tiny && type !== 'end') return;
     hideHover();
-    if (!selection) {
+    if (!selection || tiny) {
       // A click on the strip without a drag clears the window: show everything.
       if (dragPin !== undefined) state.pinned = dragPin;
       dragPin = undefined;
@@ -1112,6 +1115,8 @@ footer b { color: var(--ink); font-weight: 600; }
       commit();
       return;
     }
+    // A click inside the window without dragging leaves the window as it was.
+    if (type === 'end' && dragPin === undefined) return;
     setWindow('custom', selection.map((px) => +mini.x.invert(px)));
     // The pin is judged against the window the drag ends on, not each step.
     if (dragPin === undefined) dragPin = state.pinned;
