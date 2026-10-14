@@ -498,6 +498,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   const $ = (id) => document.getElementById(id);
+  const byTime = d3.bisector((s) => +s.t);
   const chartEl = $('chart');
   const svg = d3.select('#svg');
   const tip = $('tip');
@@ -513,9 +514,10 @@ footer b { color: var(--ink); font-weight: 600; }
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  // end, set only by a link, anchors a preset range at a past run instead of
-  // the latest. It applies while a run is pinned, and goes when the pin does
-  // or the reader picks another window.
+  // end anchors a preset range at a past run instead of the latest, so a
+  // pinned run stays in view: a link sets it, and so does a refresh that would
+  // otherwise move the window past the pinned run. It applies while a run is
+  // pinned, and goes when the pin does or the reader picks another window.
   const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, end: null, highlight: new Map(), pinned: null };
 
   // Object.hasOwn needs Safari 15.4.
@@ -622,19 +624,19 @@ footer b { color: var(--ink); font-weight: 600; }
   // UTC. A typed '+' offset arrives as a space, and a space may separate the
   // date from the time.
   const TIME = String.raw`\d\d:\d\d(?::\d\d(?:\.\d+)?)?`;
-  const SPACED_OFFSET = new RegExp(String.raw`(${TIME}) (\d\d:?\d\d)$`);
+  const SPACED_OFFSET = new RegExp(String.raw`(${TIME}) (\d\d):?(\d\d)$`);
   const SPACED_TIME = new RegExp(String.raw`^(\d{4}-\d\d-\d\d) (${TIME})`);
   const NO_ZONE = new RegExp(`T${TIME}$`);
   function parseUtc(v) {
     if (typeof v !== 'string') return NaN;
-    const s = v.trim().replace(SPACED_OFFSET, '$1+$2').replace(SPACED_TIME, '$1T$2');
+    const s = v.trim().replace(SPACED_OFFSET, '$1+$2:$3').replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }
   // Links name runs to the second; the CSV keeps milliseconds. Returns the
   // index of the run within a second of ms, or -1.
   function findRun(ms) {
     if (!Number.isFinite(ms)) return -1;
-    const i = d3.bisector((s) => +s.t).center(snapshots, ms);
+    const i = byTime.center(snapshots, ms);
     return Math.abs(+snapshots[i].t - ms) < 1000 ? i : -1;
   }
   // Within teams, commas separate slots; a comma or percent sign in a team
@@ -679,8 +681,11 @@ footer b { color: var(--ink); font-weight: 600; }
     urlTimer = setTimeout(flushUrl, URL_DELAY_MS);
   }
 
+  let urlFailures = 0;
   function flushUrl() {
-    const params = new URLSearchParams();
+    // Parameters that are not the view's (utm_source and the like) stay.
+    const params = new URLSearchParams(location.search);
+    URL_KEYS.forEach((k) => params.delete(k));
     if (state.pinned != null) params.set('run', isoSecond(+snapshots[state.pinned].t));
     if (state.range === 'custom' && state.window) {
       // The window snapped outward to whole seconds around the runs it shows:
@@ -711,9 +716,12 @@ footer b { color: var(--ink); font-weight: 600; }
     if (url === location.pathname + location.search + location.hash) return;
     try {
       history.replaceState(history.state, '', url);
+      urlFailures = 0;
     } catch {
-      // Over Safari's limit: try again once it has passed.
-      urlTimer = setTimeout(flushUrl, 2000);
+      // Over Safari's limit: try again once it has passed. A page that may
+      // never replace its URL (a sandboxed frame) stops after a few tries.
+      urlFailures += 1;
+      if (urlFailures < 5) urlTimer = setTimeout(flushUrl, 2000);
     }
   }
 
@@ -732,6 +740,13 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
+  // The reader picked a window, which replaces any linked anchor.
+  function setWindow(range, win = null) {
+    state.range = range;
+    state.window = win;
+    state.end = null;
+  }
+
   function currentWindow() {
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
@@ -746,7 +761,6 @@ footer b { color: var(--ink); font-weight: 600; }
   function computeView() {
     const metric = METRICS[state.metric];
     const [w0, w1] = currentWindow();
-    const byTime = d3.bisector((s) => +s.t);
     let i0 = byTime.left(snapshots, w0);
     let i1 = byTime.right(snapshots, w1) - 1;
     // A window narrower than the gap between two runs still shows two runs.
@@ -985,16 +999,12 @@ footer b { color: var(--ink); font-weight: 600; }
     hideHover();
     if (!selection) {
       // A click on the strip without a drag clears the window: show everything.
-      state.range = 'all';
-      state.window = null;
-      state.end = null;
+      setWindow('all');
       renderAll();
       commit();
       return;
     }
-    state.range = 'custom';
-    state.window = selection.map((px) => +mini.x.invert(px));
-    state.end = null;
+    setWindow('custom', selection.map((px) => +mini.x.invert(px)));
     computeView();
     renderFilters();
     renderChart();
@@ -1006,7 +1016,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function nearestIndex(px) {
     const t = +chart.x.invert(px);
-    const i = d3.bisector((s) => +s.t).center(view.visible, t);
+    const i = byTime.center(view.visible, t);
     return Math.max(0, Math.min(view.visible.length - 1, i));
   }
 
@@ -1306,9 +1316,7 @@ footer b { color: var(--ink); font-weight: 600; }
       });
     });
     $('range').addEventListener('change', (e) => {
-      state.range = e.target.value;
-      state.window = null;
-      state.end = null;
+      setWindow(e.target.value);
       hideHover();
       renderAll();
       commit();
@@ -1335,14 +1343,15 @@ footer b { color: var(--ink); font-weight: 600; }
       if (e.key === 'ArrowLeft') vi -= 1;
       else if (e.key === 'ArrowRight') vi += 1;
       else if (e.key === 'Home') vi = 0;
-      else if (e.key === 'End') vi = lastVi;
-      else if (e.key === 'Escape') {
-        // Back to the latest run, which also drops a linked window anchor.
+      else if (e.key === 'Escape' && state.end != null) {
+        // A linked anchor holds the window in the past; Escape releases it,
+        // and the window and table return to the latest run.
         e.preventDefault();
         pin(null);
         showHover(view.visible.length - 1);
         return;
-      } else return;
+      } else if (e.key === 'End' || e.key === 'Escape') vi = lastVi;
+      else return;
       e.preventDefault();
       vi = Math.max(0, Math.min(lastVi, vi));
       pin(view.i0 + vi);
@@ -1385,10 +1394,16 @@ footer b { color: var(--ink); font-weight: 600; }
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
         const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
+        const prevLast = +snapshots[snapshots.length - 1].t;
         snapshots = next;
         if (pinnedT != null) {
           const i = findRun(pinnedT);
           state.pinned = i < 0 || i >= snapshots.length - 1 ? null : i;
+          // A preset window moves forward with the new run; if that would
+          // leave the pinned run behind, hold the window where it was.
+          const days = RANGE_DAYS[state.range];
+          if (state.pinned != null && days && state.end == null
+              && pinnedT < +snapshots[snapshots.length - 1].t - days * DAY_MS) state.end = prevLast;
         }
         hideHover();
         renderAll();
