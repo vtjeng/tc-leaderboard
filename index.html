@@ -779,10 +779,10 @@ footer b { color: var(--ink); font-weight: 600; }
       history.replaceState(history.state, '', url);
       urlFailures = 0;
     } catch {
-      // Over Safari's limit: try again once it has passed. A page that may
-      // never replace its URL (a sandboxed frame) stops after a few tries.
+      // Over Safari's limit: try again once it has passed, backing off so a
+      // page that may never replace its URL (a sandboxed frame) rarely tries.
       urlFailures += 1;
-      if (urlFailures < 5) urlTimer = setTimeout(flushUrl, 2000);
+      urlTimer = setTimeout(flushUrl, Math.min(60000, 1000 * 2 ** urlFailures));
     }
   }
 
@@ -1100,6 +1100,8 @@ footer b { color: var(--ink); font-weight: 600; }
   let dragPin; // the pinned run when the current drag began
   function onBrush({ selection, sourceEvent, type }) {
     if (!sourceEvent || !mini) return;
+    // A click on the strip starts a zero-width selection; it is not a window.
+    if (selection && selection[1] - selection[0] < 1) return;
     hideHover();
     if (!selection) {
       // A click on the strip without a drag clears the window: show everything.
@@ -1540,14 +1542,16 @@ footer b { color: var(--ink); font-weight: 600; }
       const next = await loadSnapshots();
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
-        const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
+        const timeOf = (i) => (i == null ? null : +snapshots[i].t);
+        const pinnedT = timeOf(state.pinned);
+        const dragT = timeOf(dragPin);
         setSnapshots(next);
-        if (pinnedT != null) {
-          state.pinned = normalisePin(findRun(pinnedT));
-        }
+        const remap = (t) => (t == null ? null : normalisePin(findRun(t)));
+        state.pinned = remap(pinnedT);
+        if (dragPin !== undefined) dragPin = remap(dragT);
         hideHover();
         renderAll();
-        writeUrl();
+        writeUrlSoon();
       }
     } catch {
       // Keep showing the data already loaded; the next tick tries again.
