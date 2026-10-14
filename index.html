@@ -577,6 +577,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // Call after the view has been recomputed: computeView can drop a pinned run
   // that falls outside a new window.
   function commit() {
+    // Before the data loads there is no view to save; saving the empty state
+    // would replace the reader's saved teams.
+    if (!view) return;
     save();
     writeUrl();
   }
@@ -620,7 +623,8 @@ footer b { color: var(--ink); font-weight: 600; }
   const NO_ZONE = new RegExp(`T${TIME}$`);
   const DATE_T = /^(\d{4}-\d\d-\d\d)t/;
   function parseUtc(v) {
-    if (typeof v !== 'string') return NaN;
+    // Date.parse takes almost anything ("2" is 2001); links use ISO dates.
+    if (typeof v !== 'string' || !/^\s*\d{4}-\d\d-\d\d/.test(v)) return NaN;
     const s = v.trim().replace(DATE_T, '$1T').replace(SPACED_OFFSET, '$1+$2:$3').replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }

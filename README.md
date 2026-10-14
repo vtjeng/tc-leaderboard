@@ -62,6 +62,6 @@ entry for each free colour), and the metric, pool and table sort (`metric`,
 left out at their defaults. A link without `run` shows the latest run when it
 is opened. A preset range counts back from the latest run; when the pinned run
 leaves it, the window slides just far enough to keep the run in view, and the
-link records where it slid to as `from`. A link with
+link records where it slid to as `from` (which applies only alongside `run`). A link with
 parameters sets the whole view; only a bare link, such as the site's own
 address, restores the reader's saved view.
