@@ -513,23 +513,33 @@ footer b { color: var(--ink); font-weight: 600; }
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, highlight: new Map(), pinned: null };
+  // end, set only by a link, anchors a preset range at a past run instead of
+  // the latest; it applies while a run is pinned and clears when unpinned.
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, end: null, highlight: new Map(), pinned: null };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
+
+  function isSortKey(key) {
+    if (['team', 'speed', 'playable'].includes(key)) return true;
+    if (typeof key !== 'string') return false;
+    const [group, pool, ...rest] = key.split('-');
+    return !rest.length && GROUP_KEYS.has(group) && hasOwn(POOL_TEXT, pool);
+  }
 
   // Applies a saved or linked view to state. highlight is [[team, slot], ...].
   // Returns whether it named the highlighted teams (possibly none).
   function applyView(saved) {
     // Own keys only: a link could otherwise name an inherited one like toString.
     if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
-    if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2 && saved.window.every(Number.isFinite)) {
+    if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
+        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]) {
       state.range = 'custom';
       state.window = saved.window.map(Number);
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
-    if (saved.sort && typeof saved.sort.key === 'string' && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
+    if (saved.sort && isSortKey(saved.sort.key) && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
       state.sort = { key: saved.sort.key, dir: saved.sort.dir };
     }
     if (!Array.isArray(saved.highlight)) return false;
@@ -542,7 +552,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function loadSaved() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-      return saved ? applyView(saved) && state.highlight.size > 0 : false;
+      return saved ? applyView(saved) : false;
     } catch { return false; }
   }
   // Call after the view has been recomputed: computeView can drop a pinned run
@@ -575,11 +585,26 @@ footer b { color: var(--ink); font-weight: 600; }
   // show the teams and colours it was copied with. So the address bar is bare
   // only until the first render.
   // Opening a link does not overwrite the saved view; the next change does.
-  const URL_KEYS = ['run', 'range', 'from', 'to', 'teams', 'metric', 'pool', 'sort', 'dir'];
-  const isoMinute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
+  const URL_KEYS = ['run', 'range', 'end', 'from', 'to', 'teams', 'metric', 'pool', 'sort', 'dir'];
   const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
-  // Date.parse reads a date-time without a zone as local time; links are UTC.
-  const parseUtc = (v) => Date.parse(typeof v === 'string' && /T[\d:.]+$/.test(v) ? v + 'Z' : v);
+  // Date.parse reads a date-time without a zone as local time, but links are
+  // UTC. A typed '+' offset arrives as a space, and a space may separate the
+  // date from the time.
+  function parseUtc(v) {
+    if (typeof v !== 'string') return NaN;
+    const time = '\\d\\d:\\d\\d(?::\\d\\d(?:\\.\\d+)?)?';
+    let s = v.trim().replace(new RegExp(`(${time}) (\\d\\d:?\\d\\d)$`), '$1+$2');
+    s = s.replace(new RegExp(`^(\\d{4}-\\d\\d-\\d\\d) (${time})`), '$1T$2');
+    if (new RegExp(`T${time}$`).test(s)) s += 'Z';
+    return Date.parse(s);
+  }
+  // Links name runs to the second; the CSV keeps milliseconds. Returns the
+  // index of the run within a second of ms, or -1.
+  function findRun(ms) {
+    if (!Number.isFinite(ms)) return -1;
+    const i = d3.bisector((s) => +s.t).center(snapshots, ms);
+    return Math.abs(+snapshots[i].t - ms) < 1000 ? i : -1;
+  }
   // Within teams, commas separate slots; a comma or percent sign in a team
   // name is escaped so the name still round-trips.
   const escapeTeam = (team) => team.replace(/[%,]/g, (c) => (c === '%' ? '%25' : '%2C'));
@@ -589,43 +614,52 @@ footer b { color: var(--ink); font-weight: 600; }
     const params = new URLSearchParams(location.search);
     if (!URL_KEYS.some((k) => params.has(k))) return null;
     const get = (k) => params.get(k) ?? undefined;
-    const view = { metric: get('metric'), pool: get('pool'), range: get('range'), run: parseUtc(get('run')) };
+    const linked = { metric: get('metric'), pool: get('pool'), range: get('range'), run: parseUtc(get('run')), end: parseUtc(get('end')) };
     const from = parseUtc(get('from'));
     const to = parseUtc(get('to'));
-    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
-      view.range = 'custom';
-      view.window = [from, to];
+    if (Number.isFinite(from) && Number.isFinite(to)) {
+      linked.range = 'custom';
+      linked.window = [from, to];
     }
     const key = get('sort');
-    if (key) view.sort = { key, dir: get('dir') ?? firstDir(key) };
+    if (key) linked.sort = { key, dir: get('dir') ?? firstDir(key) };
     if (params.has('teams')) {
       const seen = new Set();
-      view.highlight = [];
+      linked.highlight = [];
       params.get('teams').split(',').forEach((s, i) => {
         const team = unescapeTeam(s);
         if (team && !seen.has(team)) {
           seen.add(team);
-          view.highlight.push([team, i + 1]);
+          linked.highlight.push([team, i + 1]);
         }
       });
     }
-    return view;
+    return linked;
   }
 
+  // Writes are batched: Safari limits how often a page may replace its URL,
+  // and holding an arrow key on the chart pins a run per keystroke.
+  const URL_DELAY_MS = 250;
+  let urlTimer = 0;
   function writeUrl() {
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(flushUrl, URL_DELAY_MS);
+  }
+
+  function flushUrl() {
     const params = new URLSearchParams();
     if (state.pinned != null) params.set('run', isoSecond(+snapshots[state.pinned].t));
-    // Presets count back from the latest run, which moves as runs arrive. With
-    // a run pinned the view is a fixed point in history, so the link fixes the
-    // window too; otherwise the preset follows the latest run, as the table does.
-    const custom = state.range === 'custom' && state.window;
-    if (custom || state.pinned != null) {
-      const [w0, w1] = custom ? state.window : currentWindow();
-      // Rounded outward to the minute: the window keeps every run it showed.
-      params.set('from', isoMinute(w0));
-      params.set('to', isoMinute(Math.ceil(w1 / 60000) * 60000));
-    } else if (state.range !== DEFAULTS.range) {
-      params.set('range', state.range);
+    if (state.range === 'custom' && state.window) {
+      // The window snapped outward to whole seconds around the runs it shows:
+      // runs are hours apart, so it reopens on exactly the same runs.
+      params.set('from', isoSecond(Math.floor(+view.t0 / 1000) * 1000));
+      params.set('to', isoSecond(Math.ceil(+view.t1 / 1000) * 1000));
+    } else {
+      if (state.range !== DEFAULTS.range) params.set('range', state.range);
+      // Presets count back from the latest run, which moves as runs arrive.
+      // With a run pinned, the link names the run the window ended at, so the
+      // pinned run stays in view; unpinning returns to the latest run.
+      if (state.pinned != null && RANGE_DAYS[state.range]) params.set('end', isoSecond(+view.t1));
     }
     if (state.metric !== DEFAULTS.metric) params.set('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) params.set('pool', state.pool);
@@ -642,9 +676,12 @@ footer b { color: var(--ink); font-weight: 600; }
     const query = params.toString().replace(/%2C/g, ',').replace(/%3A/g, ':');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
-    // Safari limits how often a page may replace its URL; past the limit the
-    // address bar just lags the view.
-    try { history.replaceState(history.state, '', url); } catch { /* see above */ }
+    try {
+      history.replaceState(history.state, '', url);
+    } catch {
+      // Over Safari's limit: try again once it has passed.
+      urlTimer = setTimeout(flushUrl, 2000);
+    }
   }
 
   function toggleHighlight(team) {
@@ -669,7 +706,8 @@ footer b { color: var(--ink); font-weight: 600; }
       return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
     }
     const days = RANGE_DAYS[state.range];
-    return [days ? Math.max(first, last - days * DAY_MS) : first, last];
+    const end = state.pinned != null && state.end != null ? Math.min(last, state.end) : last;
+    return [days ? Math.max(first, end - days * DAY_MS) : first, end];
   }
 
   function computeView() {
@@ -914,12 +952,14 @@ footer b { color: var(--ink); font-weight: 600; }
       // A click on the strip without a drag clears the window: show everything.
       state.range = 'all';
       state.window = null;
+      state.end = null;
       renderAll();
       commit();
       return;
     }
     state.range = 'custom';
     state.window = selection.map((px) => +mini.x.invert(px));
+    state.end = null;
     computeView();
     renderFilters();
     renderChart();
@@ -1210,8 +1250,14 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = i == null || i >= snapshots.length - 1 ? null : i;
-    renderChart();
-    renderTable();
+    if (state.pinned == null && state.end != null) {
+      // The window was anchored at a linked run; follow the latest run again.
+      state.end = null;
+      renderAll();
+    } else {
+      renderChart();
+      renderTable();
+    }
     writeUrl();
   }
 
@@ -1227,6 +1273,7 @@ footer b { color: var(--ink); font-weight: 600; }
     $('range').addEventListener('change', (e) => {
       state.range = e.target.value;
       state.window = null;
+      state.end = null;
       hideHover();
       renderAll();
       commit();
@@ -1295,7 +1342,13 @@ footer b { color: var(--ink); font-weight: 600; }
     try {
       const next = await loadSnapshots();
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
+        // pinned is an index; find the same run in the new list.
+        const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
         snapshots = next;
+        if (pinnedT != null) {
+          const i = findRun(pinnedT);
+          state.pinned = i < 0 || i >= snapshots.length - 1 ? null : i;
+        }
         hideHover();
         renderAll();
         writeUrl();
@@ -1317,10 +1370,12 @@ footer b { color: var(--ink); font-weight: 600; }
     renderLatestRun();
     const linked = readUrl();
     const named = linked ? applyView(linked) : loadSaved();
-    if (linked && Number.isFinite(linked.run)) {
-      const i = d3.bisector((s) => +s.t).center(snapshots, linked.run);
-      // The link names a run to the second; the CSV keeps milliseconds.
-      if (Math.abs(+snapshots[i].t - linked.run) < 1000) state.pinned = i >= snapshots.length - 1 ? null : i;
+    if (linked) {
+      const i = findRun(linked.run);
+      if (i >= 0 && i < snapshots.length - 1) state.pinned = i;
+      // end names a run to the second; a hand-written end is taken as given.
+      const e = findRun(linked.end);
+      if (state.pinned != null && Number.isFinite(linked.end)) state.end = e >= 0 ? +snapshots[e].t : linked.end;
     }
     if (!named) {
       const latest = [...snapshots[snapshots.length - 1].byTeam.values()];
