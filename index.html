@@ -514,18 +514,20 @@ footer b { color: var(--ink); font-weight: 600; }
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
   // end, set only by a link, anchors a preset range at a past run instead of
-  // the latest; it applies while a run is pinned and computeView clears it
-  // when the pin goes.
+  // the latest. It applies while a run is pinned, and goes when the pin does
+  // or the reader picks another window.
   const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, end: null, highlight: new Map(), pinned: null };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
 
-  function isSortKey(key) {
-    if (PLAIN_SORT_KEYS.includes(key)) return true;
-    if (typeof key !== 'string') return false;
+  // A sort key is a plain column ('team') or '<group>-<pool>' ('prng-held').
+  // Returns { group, pool } for a pooled key, {} for a plain one, else null.
+  function parseSortKey(key) {
+    if (PLAIN_SORT_KEYS.includes(key)) return {};
+    if (typeof key !== 'string') return null;
     const [group, pool, ...rest] = key.split('-');
-    return !rest.length && GROUP_KEYS.has(group) && hasOwn(POOL_TEXT, pool);
+    return !rest.length && GROUP_KEYS.has(group) && hasOwn(POOL_TEXT, pool) ? { group, pool } : null;
   }
 
   // Applies a saved or linked view to state. highlight is [[team, slot], ...].
@@ -540,13 +542,15 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
-    if (saved.sort && isSortKey(saved.sort.key) && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
+    if (saved.sort && parseSortKey(saved.sort.key) && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
       state.sort = { key: saved.sort.key, dir: saved.sort.dir };
     }
     if (!Array.isArray(saved.highlight)) return false;
     saved.highlight.slice(0, MAX_HIGHLIGHT).forEach((entry) => {
       const [team, slot] = Array.isArray(entry) ? entry : [];
-      if (typeof team === 'string' && Number.isInteger(slot) && slot >= 1 && slot <= MAX_HIGHLIGHT) state.highlight.set(team, slot);
+      // A team missing from every run would hold a colour and draw nothing.
+      if (typeof team === 'string' && Number.isInteger(slot) && slot >= 1 && slot <= MAX_HIGHLIGHT
+          && snapshots.some((s) => s.byTeam.has(team))) state.highlight.set(team, slot);
     });
     // An empty list is a deliberate choice; a list with nothing usable is not.
     return saved.highlight.length === 0 || state.highlight.size > 0;
@@ -564,9 +568,10 @@ footer b { color: var(--ink); font-weight: 600; }
     // end names a run to the second; a hand-written end is taken as given.
     // Without one, a run older than the preset span anchors the window at
     // itself, so the run stays in view instead of being dropped.
+    // An end that would leave the run out of the window is ignored.
     const e = findRun(linked.end);
-    if (e >= 0) state.end = +snapshots[e].t;
-    else if (Number.isFinite(linked.end)) state.end = linked.end;
+    const end = e >= 0 ? +snapshots[e].t : linked.end;
+    if (end >= t && end - days * DAY_MS <= t) state.end = end;
     else if (t < +snapshots[snapshots.length - 1].t - days * DAY_MS) state.end = t;
     return named;
   }
@@ -596,8 +601,12 @@ footer b { color: var(--ink); font-weight: 600; }
   // ones it leaves out; a bare link restores the reader's saved view instead.
   //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run,
   //                                    whichever that is when the link opens)
-  //   range=d7 | from=...&to=...       chart window, preset or custom (UTC);
-  //                                    with a run pinned, always from and to
+  //   range=d7&end=...                 chart window as a preset, counting
+  //                                    back from the latest run or, with a
+  //                                    run pinned, from the run named by end
+  //   from=...&to=...                  chart window as dragged, snapped to
+  //                                    the first and last runs it shows
+  //   (times are UTC; one without a zone is read as UTC)
   //   teams=vtjeng,,davidbau           highlighted teams by colour slot; an
   //                                    empty entry is a free slot, so each team
   //                                    keeps its colour (teams= is none)
@@ -645,7 +654,8 @@ footer b { color: var(--ink); font-weight: 600; }
       linked.window = [from, to];
     }
     const key = get('sort');
-    if (key) linked.sort = { key, dir: get('dir') ?? firstDir(key) };
+    const dir = get('dir')?.toLowerCase();
+    if (key) linked.sort = { key, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(key) };
     if (params.has('teams')) {
       const seen = new Set();
       linked.highlight = [];
@@ -977,12 +987,14 @@ footer b { color: var(--ink); font-weight: 600; }
       // A click on the strip without a drag clears the window: show everything.
       state.range = 'all';
       state.window = null;
+      state.end = null;
       renderAll();
       commit();
       return;
     }
     state.range = 'custom';
     state.window = selection.map((px) => +mini.x.invert(px));
+    state.end = null;
     computeView();
     renderFilters();
     renderChart();
@@ -1073,12 +1085,11 @@ footer b { color: var(--ink); font-weight: 600; }
   // pool shown, a key for another pool maps onto the visible one.
   const GROUP_KEYS = new Set(TABLE_GROUPS.map((g) => g.col));
   const PLAIN_SORT_KEYS = ['team', 'speed', 'playable'];
+  // state.sort.key is always valid: applyView checks saved and linked keys.
   function sortKey(pools) {
     const { key } = state.sort;
-    const [group, pool] = key.split('-');
-    if (GROUP_KEYS.has(group) && !pools.includes(pool)) return `${group}-${pools[0]}`;
-    if (!GROUP_KEYS.has(group) && !PLAIN_SORT_KEYS.includes(key)) return `points-${pools[0]}`;
-    return key;
+    const { group, pool } = parseSortKey(key);
+    return group && !pools.includes(pool) ? `${group}-${pools[0]}` : key;
   }
   function sortValue(r, key) {
     if (key === 'team') return r.team.toLowerCase();
@@ -1275,8 +1286,8 @@ footer b { color: var(--ink); font-weight: 600; }
   function pin(i) {
     state.pinned = i == null || i >= snapshots.length - 1 ? null : i;
     if (state.pinned == null && state.end != null) {
-      // The window was anchored at a linked run; computeView drops the anchor
-      // and the window follows the latest run again.
+      // Unpinning drops a linked anchor, so the window moves to the latest run.
+      state.end = null;
       renderAll();
     } else {
       renderChart();
@@ -1297,6 +1308,7 @@ footer b { color: var(--ink); font-weight: 600; }
     $('range').addEventListener('change', (e) => {
       state.range = e.target.value;
       state.window = null;
+      state.end = null;
       hideHover();
       renderAll();
       commit();
