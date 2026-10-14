@@ -52,3 +52,11 @@ HTTP and open <http://localhost:8000/>:
 ```sh
 python3 -m http.server
 ```
+
+The page remembers each reader's view in local storage and also mirrors it in
+the address bar, so a copied link reproduces the view: the standings run
+(`run`), the chart window (`range`, or `from` and `to`), the highlighted teams
+in colour order (`teams`, with an empty entry for each free colour), and the
+metric, pool and table sort (`metric`, `pool`, `sort`, `dir`). Parameters at
+their defaults are left out. A link with parameters sets the whole view; a bare
+link restores the reader's saved view.

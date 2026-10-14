@@ -515,24 +515,31 @@ footer b { color: var(--ink); font-weight: 600; }
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null, sort: { key: 'points-combined', dir: 'desc' } };
 
+  // Applies a saved or linked view to state. highlight is [[team, slot], ...].
+  // Returns whether it named the highlighted teams (possibly none).
+  function applyView(saved) {
+    // Own keys only: a link could otherwise name an inherited one like toString.
+    if (Object.hasOwn(RANGE_DAYS, saved.range ?? '')) state.range = saved.range;
+    if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2 && saved.window.every(Number.isFinite)) {
+      state.range = 'custom';
+      state.window = saved.window.map(Number);
+    }
+    if (Object.hasOwn(METRICS, saved.metric ?? '')) state.metric = saved.metric;
+    if (Object.hasOwn(POOL_TEXT, saved.pool ?? '')) state.pool = saved.pool;
+    if (saved.sort && typeof saved.sort.key === 'string' && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
+      state.sort = { key: saved.sort.key, dir: saved.sort.dir };
+    }
+    if (!Array.isArray(saved.highlight)) return false;
+    saved.highlight.slice(0, MAX_HIGHLIGHT).forEach(([team, slot]) => {
+      if (Number.isInteger(slot) && slot >= 1 && slot <= MAX_HIGHLIGHT) state.highlight.set(team, slot);
+    });
+    return true;
+  }
+
   function loadSaved() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-      if (!saved) return false;
-      if (saved.range in RANGE_DAYS) state.range = saved.range;
-      if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2) {
-        state.range = 'custom';
-        state.window = saved.window.map(Number);
-      }
-      if (saved.metric in METRICS) state.metric = saved.metric;
-      if (saved.pool in POOL_TEXT) state.pool = saved.pool;
-      if (saved.sort && typeof saved.sort.key === 'string' && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
-        state.sort = { key: saved.sort.key, dir: saved.sort.dir };
-      }
-      if (Array.isArray(saved.highlight)) {
-        saved.highlight.slice(0, MAX_HIGHLIGHT).forEach(([team, slot]) => state.highlight.set(team, slot));
-      }
-      return state.highlight.size > 0;
+      return saved ? applyView(saved) && state.highlight.size > 0 : false;
     } catch { return false; }
   }
   function save() {
@@ -541,6 +548,87 @@ footer b { color: var(--ink); font-weight: 600; }
         range: state.range, window: state.window, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
       }));
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
+  }
+
+  // The address bar mirrors the view, so a copied link reproduces it. A link
+  // with any of these parameters sets the whole view, with defaults for the
+  // ones it leaves out; a bare link restores the reader's saved view instead.
+  //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run)
+  //   range=d7 | from=...&to=...       chart window, preset or custom (UTC)
+  //   teams=vtjeng,,davidbau           highlighted teams by colour slot; an
+  //                                    empty entry is a free slot, so each team
+  //                                    keeps its colour (teams= is none)
+  //   metric=prng  pool=held  sort=anim-held  dir=asc
+  // Opening a link does not overwrite the saved view; the next change does.
+  const URL_KEYS = ['run', 'range', 'from', 'to', 'teams', 'metric', 'pool', 'sort', 'dir'];
+  const DEFAULT_SORT = { key: 'points-combined', dir: 'desc' };
+  const isoMinute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
+  const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
+
+  // Team names are split on literal commas before decoding, so a name that
+  // contains one (encoded as %2C) still round-trips.
+  function readUrl() {
+    const raw = new Map();
+    for (const part of location.search.slice(1).split('&')) {
+      if (!part) continue;
+      const eq = part.indexOf('=');
+      const k = decodeURIComponent(eq < 0 ? part : part.slice(0, eq));
+      if (URL_KEYS.includes(k) && !raw.has(k)) raw.set(k, eq < 0 ? '' : part.slice(eq + 1).replace(/\+/g, ' '));
+    }
+    if (!raw.size) return null;
+    const dec = (k) => {
+      try { return raw.has(k) ? decodeURIComponent(raw.get(k)) : undefined; } catch { return undefined; }
+    };
+    const view = { metric: dec('metric'), pool: dec('pool'), range: dec('range'), run: Date.parse(dec('run')) };
+    const from = Date.parse(dec('from'));
+    const to = Date.parse(dec('to'));
+    if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
+      view.range = 'custom';
+      view.window = [from, to];
+    }
+    const key = dec('sort');
+    if (key) view.sort = { key, dir: dec('dir') ?? firstDir(key) };
+    if (raw.has('teams')) {
+      const seen = new Set();
+      view.highlight = [];
+      raw.get('teams').split(',').forEach((enc, i) => {
+        let team;
+        try { team = decodeURIComponent(enc); } catch { return; }
+        if (team && !seen.has(team)) {
+          seen.add(team);
+          view.highlight.push([team, i + 1]);
+        }
+      });
+    }
+    return view;
+  }
+
+  function writeUrl() {
+    const enc = (v) => encodeURIComponent(v).replace(/%3A/g, ':');
+    const params = [];
+    if (state.pinned != null) params.push(['run', isoSecond(+snapshots[state.pinned].t)]);
+    if (state.range === 'custom' && state.window) {
+      // Rounded outward to the minute: the window keeps every run it showed.
+      params.push(['from', isoMinute(Math.floor(state.window[0] / 60000) * 60000)]);
+      params.push(['to', isoMinute(Math.ceil(state.window[1] / 60000) * 60000)]);
+    } else if (state.range !== DEFAULT_RANGE) {
+      params.push(['range', state.range]);
+    }
+    if (state.metric !== 'points') params.push(['metric', state.metric]);
+    if (state.pool !== 'combined') params.push(['pool', state.pool]);
+    if (state.sort.key !== DEFAULT_SORT.key || state.sort.dir !== DEFAULT_SORT.dir) {
+      params.push(['sort', state.sort.key]);
+      if (state.sort.dir !== firstDir(state.sort.key)) params.push(['dir', state.sort.dir]);
+    }
+    const slots = [];
+    state.highlight.forEach((slot, team) => { slots[slot - 1] = team; });
+    const teams = Array.from(slots, (team) => (team == null ? '' : encodeURIComponent(team))).join(',');
+    const query = params.map(([k, v]) => `${k}=${enc(v)}`).concat(`teams=${teams}`).join('&');
+    const url = `${location.pathname}?${query}${location.hash}`;
+    if (url === location.pathname + location.search + location.hash) return;
+    // Safari limits how often a page may replace its URL; past the limit the
+    // address bar just lags the view.
+    try { history.replaceState(history.state, '', url); } catch { /* see above */ }
   }
 
   function toggleHighlight(team) {
@@ -1093,6 +1181,9 @@ footer b { color: var(--ink); font-weight: 600; }
       });
       tbody.append(tr);
     });
+    // Every change to the view ends by redrawing the table (dragging the
+    // overview window does so only on release), so the URL follows here.
+    writeUrl();
   }
 
   function renderAll() {
@@ -1209,7 +1300,14 @@ footer b { color: var(--ink); font-weight: 600; }
       return;
     }
     renderLatestRun();
-    if (!loadSaved()) {
+    const linked = readUrl();
+    const named = linked ? applyView(linked) : loadSaved();
+    if (linked && Number.isFinite(linked.run)) {
+      const i = d3.bisector((s) => +s.t).center(snapshots, linked.run);
+      // The link names a run to the second; the CSV keeps milliseconds.
+      if (Math.abs(+snapshots[i].t - linked.run) < 1000) state.pinned = i >= snapshots.length - 1 ? null : i;
+    }
+    if (!named) {
       const latest = [...snapshots[snapshots.length - 1].byTeam.values()];
       latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
