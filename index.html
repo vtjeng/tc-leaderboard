@@ -447,6 +447,9 @@ footer b { color: var(--ink); font-weight: 600; }
   const MAX_HIGHLIGHT = 8;
   const DEFAULT_HIGHLIGHT = 6;
   const STORE_KEY = 'tc-leaderboard-view';
+  // Version 2 saves only once the data has loaded. Version 1 could save while
+  // it loaded, so its empty team list may not be the reader's choice.
+  const STORE_VERSION = 2;
   const DAY_MS = 86400000;
 
   const fmtInt = d3.format(',');
@@ -571,7 +574,9 @@ footer b { color: var(--ink); font-weight: 600; }
   function loadSaved() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-      return saved ? applyView(saved) : false;
+      if (!saved) return false;
+      const named = applyView(saved);
+      return saved.v >= STORE_VERSION ? named : state.highlight.size > 0;
     } catch { return false; }
   }
   // Call after the view has been recomputed: computeView can drop a pinned run
@@ -586,7 +591,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        range: state.range, window: state.range === 'custom' ? linkWindow() : null, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
+        v: STORE_VERSION, range: state.range, window: state.range === 'custom' ? linkWindow() : null, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
       }));
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
   }
@@ -621,11 +626,10 @@ footer b { color: var(--ink); font-weight: 600; }
   const SPACED_OFFSET = new RegExp(String.raw`(${TIME}) (\d\d):?(\d\d)$`);
   const SPACED_TIME = new RegExp(String.raw`^(\d{4}-\d\d-\d\d) (${TIME})`);
   const NO_ZONE = new RegExp(`T${TIME}$`);
-  const DATE_T = /^(\d{4}-\d\d-\d\d)t/;
   function parseUtc(v) {
     // Date.parse takes almost anything ("2" is 2001); links use ISO dates.
     if (typeof v !== 'string' || !/^\s*\d{4}-\d\d-\d\d/.test(v)) return NaN;
-    const s = v.trim().replace(DATE_T, '$1T').replace(SPACED_OFFSET, '$1+$2:$3').replace(SPACED_TIME, '$1T$2');
+    const s = v.trim().toUpperCase().replace(SPACED_OFFSET, '$1+$2:$3').replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }
   // Links name runs to the second; the CSV keeps milliseconds. Returns the
@@ -835,6 +839,13 @@ footer b { color: var(--ink); font-weight: 600; }
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
     $('range').value = state.range;
+    // A preset slid back to a pinned run no longer ends at the latest run.
+    for (const opt of $('range').options) {
+      opt.dataset.label ??= opt.textContent;
+      const days = RANGE_DAYS[opt.value];
+      opt.textContent = opt.value === state.range && days && state.window
+        ? `${days} days to ${fmtDay.format(view.t1)}` : opt.dataset.label;
+    }
   }
 
   function renderLegend() {
@@ -1354,10 +1365,15 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = normalisePin(i);
-    computeView();
-    // A preset window may have slid; move the overview's window to match
-    // rather than redrawing the strip.
-    mini.moveTo(view.t0, view.t1);
+    const win = state.window;
+    slidePreset();
+    if (state.window !== win) {
+      // The preset window slid; move the overview's window to match rather
+      // than redrawing the strip.
+      computeView();
+      renderFilters();
+      mini.moveTo(view.t0, view.t1);
+    }
     renderChart();
     renderTable();
     writeUrlSoon();
@@ -1366,6 +1382,9 @@ footer b { color: var(--ink); font-weight: 600; }
   function wire() {
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
+        // Before the data loads, the link or saved view decides; the controls
+        // are reset to it once it has.
+        if (!view) return;
         state[el.name] = el.value;
         hideHover();
         renderAll();
@@ -1373,6 +1392,7 @@ footer b { color: var(--ink); font-weight: 600; }
       });
     });
     $('range').addEventListener('change', (e) => {
+      if (!view) return;
       setWindow(e.target.value);
       hideHover();
       renderAll();
@@ -1399,14 +1419,16 @@ footer b { color: var(--ink); font-weight: 600; }
       // A preset window follows the pinned run, so the arrow keys can step
       // past its edges; a dragged window stays put and bounds them.
       const last = snapshots.length - 1;
-      const [lo, hi] = state.range === 'custom' ? [view.i0, view.i0 + view.visible.length - 1] : [0, last];
+      const end = view.i0 + view.visible.length - 1;
+      const custom = state.range === 'custom';
+      const [lo, hi] = custom ? [view.i0, end] : [0, last];
       let i = state.pinned ?? last;
       if (e.key === 'ArrowLeft') i -= 1;
       else if (e.key === 'ArrowRight') i += 1;
       else if (e.key === 'Home') i = view.i0;
-      else if (e.key === 'End') i = view.i0 + view.visible.length - 1;
+      else if (e.key === 'End') i = end;
       // Escape returns to the latest run, or in a dragged window to its last.
-      else if (e.key === 'Escape') i = state.range === 'custom' ? view.i0 + view.visible.length - 1 : last;
+      else if (e.key === 'Escape') i = custom ? end : last;
       else return;
       e.preventDefault();
       pin(Math.max(lo, Math.min(hi, i)));
