@@ -481,7 +481,6 @@ footer b { color: var(--ink); font-weight: 600; }
   };
   const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
   const RANGE_DAYS = { all: null, d90: 90, d30: 30, d7: 7 };
-  const DEFAULT_RANGE = 'd30';
 
   // "PRNG match" stays capitalised; "Points" becomes "points" mid-sentence.
   const inSentence = (title) => (/^[A-Z]{2}/.test(title) ? title : title[0].toLowerCase() + title.slice(1));
@@ -513,19 +512,23 @@ footer b { color: var(--ink); font-weight: 600; }
   // overview window; window then holds its [start, end] in epoch ms.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
-  const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null, sort: { key: 'points-combined', dir: 'desc' } };
+  const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, highlight: new Map(), pinned: null };
+
+  // Object.hasOwn needs Safari 15.4.
+  const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
 
   // Applies a saved or linked view to state. highlight is [[team, slot], ...].
   // Returns whether it named the highlighted teams (possibly none).
   function applyView(saved) {
     // Own keys only: a link could otherwise name an inherited one like toString.
-    if (Object.hasOwn(RANGE_DAYS, saved.range ?? '')) state.range = saved.range;
+    if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
     if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2 && saved.window.every(Number.isFinite)) {
       state.range = 'custom';
       state.window = saved.window.map(Number);
     }
-    if (Object.hasOwn(METRICS, saved.metric ?? '')) state.metric = saved.metric;
-    if (Object.hasOwn(POOL_TEXT, saved.pool ?? '')) state.pool = saved.pool;
+    if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
+    if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
     if (saved.sort && typeof saved.sort.key === 'string' && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
       state.sort = { key: saved.sort.key, dir: saved.sort.dir };
     }
@@ -542,6 +545,12 @@ footer b { color: var(--ink); font-weight: 600; }
       return saved ? applyView(saved) && state.highlight.size > 0 : false;
     } catch { return false; }
   }
+  // Call after the view has been recomputed: computeView can drop a pinned run
+  // that falls outside a new window.
+  function commit() {
+    save();
+    writeUrl();
+  }
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
@@ -553,17 +562,24 @@ footer b { color: var(--ink); font-weight: 600; }
   // The address bar mirrors the view, so a copied link reproduces it. A link
   // with any of these parameters sets the whole view, with defaults for the
   // ones it leaves out; a bare link restores the reader's saved view instead.
-  //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run)
-  //   range=d7 | from=...&to=...       chart window, preset or custom (UTC)
+  //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run,
+  //                                    whichever that is when the link opens)
+  //   range=d7 | from=...&to=...       chart window, preset or custom (UTC);
+  //                                    with a run pinned, always from and to
   //   teams=vtjeng,,davidbau           highlighted teams by colour slot; an
   //                                    empty entry is a free slot, so each team
   //                                    keeps its colour (teams= is none)
   //   metric=prng  pool=held  sort=anim-held  dir=asc
+  // Other parameters are left out at their defaults, but teams is always
+  // written: the default teams follow the latest standings, and a link should
+  // show the teams and colours it was copied with. So the address bar is bare
+  // only until the first render.
   // Opening a link does not overwrite the saved view; the next change does.
   const URL_KEYS = ['run', 'range', 'from', 'to', 'teams', 'metric', 'pool', 'sort', 'dir'];
-  const DEFAULT_SORT = { key: 'points-combined', dir: 'desc' };
   const isoMinute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
   const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
+  // Date.parse reads a date-time without a zone as local time; links are UTC.
+  const parseUtc = (v) => Date.parse(typeof v === 'string' && /T[\d:.]+$/.test(v) ? v + 'Z' : v);
 
   // Team names are split on literal commas before decoding, so a name that
   // contains one (encoded as %2C) still round-trips.
@@ -572,16 +588,17 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const part of location.search.slice(1).split('&')) {
       if (!part) continue;
       const eq = part.indexOf('=');
-      const k = decodeURIComponent(eq < 0 ? part : part.slice(0, eq));
+      let k;
+      try { k = decodeURIComponent(eq < 0 ? part : part.slice(0, eq)); } catch { continue; }
       if (URL_KEYS.includes(k) && !raw.has(k)) raw.set(k, eq < 0 ? '' : part.slice(eq + 1).replace(/\+/g, ' '));
     }
     if (!raw.size) return null;
     const dec = (k) => {
       try { return raw.has(k) ? decodeURIComponent(raw.get(k)) : undefined; } catch { return undefined; }
     };
-    const view = { metric: dec('metric'), pool: dec('pool'), range: dec('range'), run: Date.parse(dec('run')) };
-    const from = Date.parse(dec('from'));
-    const to = Date.parse(dec('to'));
+    const view = { metric: dec('metric'), pool: dec('pool'), range: dec('range'), run: parseUtc(dec('run')) };
+    const from = parseUtc(dec('from'));
+    const to = parseUtc(dec('to'));
     if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
       view.range = 'custom';
       view.window = [from, to];
@@ -607,16 +624,21 @@ footer b { color: var(--ink); font-weight: 600; }
     const enc = (v) => encodeURIComponent(v).replace(/%3A/g, ':');
     const params = [];
     if (state.pinned != null) params.push(['run', isoSecond(+snapshots[state.pinned].t)]);
-    if (state.range === 'custom' && state.window) {
+    // Presets count back from the latest run, which moves as runs arrive. With
+    // a run pinned the view is a fixed point in history, so the link fixes the
+    // window too; otherwise the preset follows the latest run, as the table does.
+    const custom = state.range === 'custom' && state.window;
+    if (custom || state.pinned != null) {
+      const [w0, w1] = custom ? state.window : currentWindow();
       // Rounded outward to the minute: the window keeps every run it showed.
-      params.push(['from', isoMinute(Math.floor(state.window[0] / 60000) * 60000)]);
-      params.push(['to', isoMinute(Math.ceil(state.window[1] / 60000) * 60000)]);
-    } else if (state.range !== DEFAULT_RANGE) {
+      params.push(['from', isoMinute(w0)]);
+      params.push(['to', isoMinute(Math.ceil(w1 / 60000) * 60000)]);
+    } else if (state.range !== DEFAULTS.range) {
       params.push(['range', state.range]);
     }
-    if (state.metric !== 'points') params.push(['metric', state.metric]);
-    if (state.pool !== 'combined') params.push(['pool', state.pool]);
-    if (state.sort.key !== DEFAULT_SORT.key || state.sort.dir !== DEFAULT_SORT.dir) {
+    if (state.metric !== DEFAULTS.metric) params.push(['metric', state.metric]);
+    if (state.pool !== DEFAULTS.pool) params.push(['pool', state.pool]);
+    if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
       params.push(['sort', state.sort.key]);
       if (state.sort.dir !== firstDir(state.sort.key)) params.push(['dir', state.sort.dir]);
     }
@@ -642,8 +664,8 @@ footer b { color: var(--ink); font-weight: 600; }
       while (used.has(slot)) slot += 1;
       state.highlight.set(team, slot);
     }
-    save();
     renderAll();
+    commit();
   }
 
   function currentWindow() {
@@ -898,8 +920,8 @@ footer b { color: var(--ink); font-weight: 600; }
       // A click on the strip without a drag clears the window: show everything.
       state.range = 'all';
       state.window = null;
-      save();
       renderAll();
+      commit();
       return;
     }
     state.range = 'custom';
@@ -908,8 +930,8 @@ footer b { color: var(--ink); font-weight: 600; }
     renderFilters();
     renderChart();
     if (type === 'end') {
-      save();
       renderTable();
+      commit();
     }
   }
 
@@ -1013,8 +1035,8 @@ footer b { color: var(--ink); font-weight: 600; }
   function setSort(key) {
     const current = sortKey([state.pool]);
     state.sort = { key, dir: key === current ? (state.sort.dir === 'asc' ? 'desc' : 'asc') : firstDir(key) };
-    save();
     renderTable();
+    commit();
     document.querySelector(`#thead button[data-key="${key}"]`)?.focus();
   }
 
@@ -1181,9 +1203,6 @@ footer b { color: var(--ink); font-weight: 600; }
       });
       tbody.append(tr);
     });
-    // Every change to the view ends by redrawing the table (dragging the
-    // overview window does so only on release), so the URL follows here.
-    writeUrl();
   }
 
   function renderAll() {
@@ -1199,23 +1218,24 @@ footer b { color: var(--ink); font-weight: 600; }
     state.pinned = i == null || i >= snapshots.length - 1 ? null : i;
     renderChart();
     renderTable();
+    writeUrl();
   }
 
   function wire() {
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
         state[el.name] = el.value;
-        save();
         hideHover();
         renderAll();
+        commit();
       });
     });
     $('range').addEventListener('change', (e) => {
       state.range = e.target.value;
       state.window = null;
-      save();
       hideHover();
       renderAll();
+      commit();
     });
     $('st-latest').addEventListener('click', () => pin(null));
     // Shadow under the frozen title bar only once the page has scrolled.
@@ -1284,6 +1304,7 @@ footer b { color: var(--ink); font-weight: 600; }
         snapshots = next;
         hideHover();
         renderAll();
+        writeUrl();
       }
     } catch {
       // Keep showing the data already loaded; the next tick tries again.
@@ -1313,6 +1334,7 @@ footer b { color: var(--ink); font-weight: 600; }
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
     renderAll();
+    writeUrl();
     setInterval(refresh, REFRESH_MS);
   }
 

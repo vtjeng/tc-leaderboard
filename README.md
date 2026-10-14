@@ -55,8 +55,11 @@ python3 -m http.server
 
 The page remembers each reader's view in local storage and also mirrors it in
 the address bar, so a copied link reproduces the view: the standings run
-(`run`), the chart window (`range`, or `from` and `to`), the highlighted teams
-in colour order (`teams`, with an empty entry for each free colour), and the
-metric, pool and table sort (`metric`, `pool`, `sort`, `dir`). Parameters at
-their defaults are left out. A link with parameters sets the whole view; a bare
-link restores the reader's saved view.
+(`run`), the chart window (`range`, or `from` and `to` in UTC), the highlighted
+teams in colour order (`teams`, with an empty entry for each free colour), and
+the metric, pool and table sort (`metric`, `pool`, `sort`, `dir`). `teams` is
+always present; the other parameters are left out at their defaults. A link
+without `run` shows the latest run when it is opened, and a preset range counts
+back from that run; with a run pinned, the link fixes the window as `from` and
+`to`. A link with parameters sets the whole view; only a bare link, such as the
+site's own address, restores the reader's saved view.
