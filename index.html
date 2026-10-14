@@ -382,8 +382,6 @@ footer b { color: var(--ink); font-weight: 600; }
             <option value="d90">Last 90 days</option>
             <option value="d30">Last 30 days</option>
             <option value="d7">Last 7 days</option>
-            <option value="custom" hidden disabled>Custom</option>
-            <option value="slid" id="range-slid" hidden disabled></option>
           </select>
         </span>
       </div>
@@ -545,7 +543,7 @@ footer b { color: var(--ink); font-weight: 600; }
       if (used.has(slot)) return;
       // A team missing from every run would hold a colour and draw nothing.
       if (typeof team === 'string' && Number.isInteger(slot) && slot >= 1 && slot <= MAX_HIGHLIGHT
-          && snapshots.some((s) => s.byTeam.has(team))) {
+          && !state.highlight.has(team) && isKnownTeam(team)) {
         state.highlight.set(team, slot);
         used.add(slot);
       }
@@ -647,18 +645,20 @@ footer b { color: var(--ink); font-weight: 600; }
   // Names like from and sort are common in other people's links too
   // (from=newsletter), so a parameter is the view's only if its value parses.
   const isTime = (v) => Number.isFinite(parseUtc(v));
+  const isKnownTeam = (team) => snapshots.some((s) => s.byTeam.has(team));
   // Parameters that only qualify another (dir, to, a preset's from) do not
   // claim the URL on their own.
   const VALID = {
     run: isTime,
-    from: (v, p) => isTime(v) && (p.has('to') ? isTime(p.get('to')) : isOwn(p, 'run')),
+    from: (v, p) => isTime(v) && (isTime(p.get('to')) || isOwn(p, 'run')),
     to: (v, p) => isTime(v) && isTime(p.get('from')),
     range: (v) => hasOwn(RANGE_DAYS, v.toLowerCase()),
     metric: (v) => hasOwn(METRICS, v.toLowerCase()),
     pool: (v) => hasOwn(POOL_TEXT, v.toLowerCase()),
     sort: (v) => parseSortKey(v.toLowerCase()) != null,
     dir: (v, p) => /^(asc|desc)$/i.test(v) && isOwn(p, 'sort'),
-    teams: () => true,
+    // Empty is the view's (no teams); otherwise it must name a team.
+    teams: (v) => v === '' || v.split(',').some((t) => isKnownTeam(unescapeTeam(t))),
   };
   const URL_KEYS = Object.keys(VALID);
   const isOwn = (params, k) => params.has(k) && VALID[k](params.get(k), params);
@@ -696,18 +696,29 @@ footer b { color: var(--ink); font-weight: 600; }
     return linked;
   }
 
-  // Pins are batched: Safari limits how often a page may replace its URL,
-  // and holding an arrow key on the chart pins a run per keystroke. Other
-  // changes are written at once, so a reload right after one keeps it.
+  // Safari limits how often a page may replace its URL, and holding an arrow
+  // key on the chart pins a run per keystroke. So a pin is written at once,
+  // and pins that follow within URL_DELAY_MS are written together after it.
   const URL_DELAY_MS = 250;
   let urlTimer = 0;
+  let urlCooling = false;
+  let urlPending = false;
   function writeUrl() {
     clearTimeout(urlTimer);
+    urlPending = false;
     flushUrl();
   }
   function writeUrlSoon() {
-    clearTimeout(urlTimer);
-    urlTimer = setTimeout(flushUrl, URL_DELAY_MS);
+    if (urlCooling) {
+      urlPending = true;
+      return;
+    }
+    writeUrl();
+    urlCooling = true;
+    setTimeout(() => {
+      urlCooling = false;
+      if (urlPending) writeUrlSoon();
+    }, URL_DELAY_MS);
   }
 
   let urlFailures = 0;
@@ -808,6 +819,8 @@ footer b { color: var(--ink); font-weight: 600; }
     const span = days * DAY_MS;
     if (t < w0) state.window = [t, t + span];
     else if (t > w1) state.window = [t - span, t];
+    // A window reaching the latest run is the preset's own.
+    if (state.window && state.window[1] >= +snapshots[snapshots.length - 1].t) state.window = null;
   }
 
   // The first and last runs a window shows. A window narrower than the gap
@@ -850,14 +863,25 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    // A preset slid back to a pinned run no longer ends at the latest run, so
-    // the menu names it apart; picking the preset again returns to the latest.
+    // A dragged window, or a preset slid back to a pinned run, gets its own
+    // menu entry while it lasts, so picking a preset returns to the latest
+    // run. It is added and removed rather than hidden: Safari shows hidden
+    // options.
     const days = RANGE_DAYS[state.range];
-    const slid = Boolean(days && state.window);
-    const slidOpt = $('range-slid');
-    slidOpt.hidden = !slid;
-    if (slid) slidOpt.textContent = `${days} days to ${fmtDay.format(view.t1)}`;
-    $('range').value = slid ? 'slid' : state.range;
+    const label = state.range === 'custom' ? 'Custom'
+      : days && state.window ? `${days} days to ${fmtDay.format(view.t1)}` : null;
+    const select = $('range');
+    let extra = $('range-extra');
+    if (label && !extra) {
+      extra = new Option('', 'extra');
+      extra.id = 'range-extra';
+      extra.disabled = true;
+      select.add(extra);
+    } else if (!label && extra) {
+      extra.remove();
+    }
+    if (label) extra.textContent = label;
+    select.value = label ? 'extra' : state.range;
   }
 
   function renderLegend() {
@@ -1406,11 +1430,10 @@ footer b { color: var(--ink); font-weight: 600; }
     $('range').addEventListener('change', (e) => {
       if (!view) return;
       setWindow(e.target.value);
-      // A picked preset shows its latest window; a pinned run older than that
+      // A picked preset shows its latest window; a pinned run outside that
       // goes, rather than sliding the window straight back.
-      const days = RANGE_DAYS[state.range];
-      const last = snapshots.length - 1;
-      if (days && state.pinned != null && +snapshots[state.pinned].t < +snapshots[last].t - days * DAY_MS) state.pinned = null;
+      const [i0] = runsIn(currentWindow());
+      if (state.pinned != null && state.pinned < i0) state.pinned = null;
       hideHover();
       renderAll();
       commit();
@@ -1456,9 +1479,6 @@ footer b { color: var(--ink); font-weight: 600; }
       showHover((state.pinned ?? last) - view.i0);
     });
     node.addEventListener('blur', hideHover);
-    // Write a batched pin before the page goes, so a copied or restored
-    // address carries it.
-    window.addEventListener('pagehide', () => { if (view) writeUrl(); });
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
