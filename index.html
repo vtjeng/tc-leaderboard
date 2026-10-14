@@ -527,7 +527,9 @@ footer b { color: var(--ink); font-weight: 600; }
   function applyView(saved) {
     // Own keys only: a link could otherwise name an inherited one like toString.
     if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
-    if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
+    // A window makes the range custom; a link may also name the preset it
+    // falls back to if the window is unusable.
+    if (Array.isArray(saved.window) && saved.window.length === 2
         && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
         && saved.window[1] >= +snapshots[0].t && saved.window[0] <= +snapshots[snapshots.length - 1].t) {
       state.range = 'custom';
@@ -562,7 +564,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const [i0, i1] = runsIn(currentWindow());
     if (state.range === 'custom' && (state.pinned < i0 || state.pinned > i1)) {
       // The run is the link's point; a window that leaves it out gives way.
-      setWindow(hasOwn(RANGE_DAYS, linked.preset) ? linked.preset : DEFAULTS.range);
+      setWindow(hasOwn(RANGE_DAYS, linked.range) ? linked.range : DEFAULTS.range);
     }
     const days = RANGE_DAYS[state.range];
     if (days && Number.isFinite(linked.from)) state.window = [linked.from, linked.from + days * DAY_MS];
@@ -587,7 +589,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // would replace the reader's saved teams.
     if (!view) return;
     save();
-    writeUrlSoon();
+    writeUrl();
   }
   function save() {
     try {
@@ -652,8 +654,8 @@ footer b { color: var(--ink); font-weight: 600; }
   // claim the URL on their own.
   const VALID = {
     run: isTime,
-    from: (v, p) => isTime(v) && (isTime(p.get('to')) || isOwn(p, 'run')),
-    to: (v, p) => isTime(v) && isTime(p.get('from')),
+    from: (v, p) => isTime(v) && (parseUtc(v) < parseUtc(p.get('to')) || isOwn(p, 'run')),
+    to: (v, p) => parseUtc(p.get('from')) < parseUtc(v),
     range: (v) => hasOwn(RANGE_DAYS, v.toLowerCase()),
     metric: (v) => hasOwn(METRICS, v.toLowerCase()),
     pool: (v) => hasOwn(POOL_TEXT, v.toLowerCase()),
@@ -674,9 +676,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const linked = { metric: word('metric'), pool: word('pool'), range: word('range'), run: parseUtc(get('run')) };
     const from = parseUtc(get('from'));
     const to = parseUtc(get('to'));
-    linked.preset = linked.range;
     if (from < to) {
-      linked.range = 'custom';
       linked.window = [from, to];
     } else if (get('to') == null) {
       linked.from = from;
@@ -698,33 +698,22 @@ footer b { color: var(--ink); font-weight: 600; }
     return linked;
   }
 
-  // Safari limits how often a page may replace its URL, and holding an arrow
-  // key pins a run (or changes a radio) per keystroke. So a change is written
-  // at once, and changes that follow within URL_DELAY_MS together after it.
-  // Safari allows 100 replacements per 30 s; this stays under it.
-  const URL_DELAY_MS = 350;
+  // Safari allows a page 100 URL replacements per 30 s, and holding an arrow
+  // key pins a run per keystroke. A change is written at once while recent
+  // writes are within budget; past it, the latest view is written as soon as
+  // the budget allows.
+  const URL_BUDGET = 80;
+  const URL_BUDGET_MS = 30000;
+  let urlWrites = []; // times of recent writes
   let urlTimer = 0;
-  let urlCooling = false;
-  let urlPending = false;
   function writeUrl() {
     clearTimeout(urlTimer);
-    urlPending = false;
-    flushUrl();
-  }
-  function writeUrlSoon() {
-    if (urlCooling) {
-      urlPending = true;
-      return;
-    }
-    writeUrl();
-    urlCooling = true;
-    setTimeout(() => {
-      urlCooling = false;
-      if (urlPending) writeUrlSoon();
-    }, URL_DELAY_MS);
+    const now = Date.now();
+    urlWrites = urlWrites.filter((t) => now - t < URL_BUDGET_MS);
+    if (urlWrites.length < URL_BUDGET) flushUrl();
+    else urlTimer = setTimeout(writeUrl, urlWrites[0] + URL_BUDGET_MS - now);
   }
 
-  let urlFailures = 0;
   // A dragged window as saved and linked: snapped outward to whole seconds
   // around the runs it shows. Runs are hours apart, so it reopens on exactly
   // the same runs, even when computeView widened it to two.
@@ -776,14 +765,15 @@ footer b { color: var(--ink); font-weight: 600; }
     const query = params.toString().replace(/%2C/g, ',').replace(/%3A/g, ':');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
+    urlWrites.push(Date.now());
     try {
       history.replaceState(history.state, '', url);
       urlFailures = 0;
     } catch {
-      // Over Safari's limit: try again once it has passed, backing off so a
-      // page that may never replace its URL (a sandboxed frame) rarely tries.
+      // Refused anyway: try again later, backing off so a page that may never
+      // replace its URL (a sandboxed frame) rarely tries.
       urlFailures += 1;
-      urlTimer = setTimeout(flushUrl, Math.min(60000, 1000 * 2 ** urlFailures));
+      urlTimer = setTimeout(writeUrl, Math.min(60000, 1000 * 2 ** urlFailures));
     }
   }
 
@@ -819,12 +809,14 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // A preset window keeps the pinned run in view, sliding only as far as it
   // must when the run leaves it, and returns to the latest run when unpinned.
+  // Returns whether the window moved.
   function slidePreset() {
     const days = RANGE_DAYS[state.range];
-    if (!days) return;
+    if (!days) return false;
+    const before = state.window;
     if (state.pinned == null) {
       state.window = null;
-      return;
+      return before != null;
     }
     const t = +snapshots[state.pinned].t;
     const [w0, w1] = currentWindow();
@@ -833,6 +825,7 @@ footer b { color: var(--ink); font-weight: 600; }
     else if (t > w1) state.window = [t - span, t];
     // A window reaching the latest run is the preset's own.
     if (state.window && state.window[1] >= +snapshots[snapshots.length - 1].t) state.window = null;
+    return state.window !== before;
   }
 
   // The first and last runs a window shows. A window narrower than the gap
@@ -1094,8 +1087,8 @@ footer b { color: var(--ink); font-weight: 600; }
         .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
     }
     // A programmatic move has no sourceEvent, so onBrush ignores it.
-    brushG.call(brush.move, [x(view.t0), x(view.t1)]);
     mini = { x, moveTo: (t0, t1) => brushG.call(brush.move, [x(t0), x(t1)]) };
+    mini.moveTo(view.t0, view.t1);
   }
 
   let dragPin; // the pinned run when the current drag began
@@ -1132,7 +1125,7 @@ footer b { color: var(--ink); font-weight: 600; }
     } else if (state.pinned !== pinned) {
       // The window left the pinned run behind: the table returns to the latest.
       renderTable();
-      writeUrlSoon();
+      writeUrl();
     }
   }
 
@@ -1425,9 +1418,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = normalisePin(i);
-    const win = state.window;
-    slidePreset();
-    if (state.window !== win) {
+    if (slidePreset()) {
       // The preset window slid; move the overview's window to match rather
       // than redrawing the strip.
       buildView();
@@ -1436,7 +1427,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     renderChart();
     renderTable();
-    writeUrlSoon();
+    writeUrl();
   }
 
   // The controls wait for the data: until then the link or saved view has
@@ -1545,18 +1536,15 @@ footer b { color: var(--ink); font-weight: 600; }
   async function refresh() {
     try {
       const next = await loadSnapshots();
-      if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
+      // Redrawing the overview would cut a drag short; the next tick retries.
+      if (dragPin === undefined && +next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
-        const timeOf = (i) => (i == null ? null : +snapshots[i].t);
-        const pinnedT = timeOf(state.pinned);
-        const dragT = timeOf(dragPin);
+        const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
         setSnapshots(next);
-        const remap = (t) => (t == null ? null : normalisePin(findRun(t)));
-        state.pinned = remap(pinnedT);
-        if (dragPin !== undefined) dragPin = remap(dragT);
+        if (pinnedT != null) state.pinned = normalisePin(findRun(pinnedT));
         hideHover();
         renderAll();
-        writeUrlSoon();
+        writeUrl();
       }
     } catch {
       // Keep showing the data already loaded; the next tick tries again.
