@@ -514,11 +514,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  // end anchors a preset range at a past run instead of the latest, so a
-  // pinned run stays in view: a link sets it, and so does a refresh that would
-  // otherwise move the window past the pinned run. It applies while a run is
-  // pinned, and goes when the pin does or the reader picks another window.
-  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, end: null, highlight: new Map(), pinned: null };
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, highlight: new Map(), pinned: null };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -558,23 +554,11 @@ footer b { color: var(--ink); font-weight: 600; }
     return saved.highlight.length === 0 || state.highlight.size > 0;
   }
 
-  // A link also names a run, and the end of its preset window.
+  // A link also names a pinned run.
   function applyLink(linked) {
     const named = applyView(linked);
     const i = findRun(linked.run);
-    if (i < 0 || i >= snapshots.length - 1) return named;
-    state.pinned = i;
-    const days = RANGE_DAYS[state.range];
-    if (!days) return named;
-    const t = +snapshots[i].t;
-    // end names a run to the second; a hand-written end is taken as given.
-    // Without one, a run older than the preset span anchors the window at
-    // itself, so the run stays in view instead of being dropped.
-    // An end that would leave the run out of the window is ignored.
-    const e = findRun(linked.end);
-    const end = e >= 0 ? +snapshots[e].t : linked.end;
-    if (end >= t && end - days * DAY_MS <= t) state.end = end;
-    else if (t < +snapshots[snapshots.length - 1].t - days * DAY_MS) state.end = t;
+    if (i >= 0 && i < snapshots.length - 1) state.pinned = i;
     return named;
   }
 
@@ -603,9 +587,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // ones it leaves out; a bare link restores the reader's saved view instead.
   //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run,
   //                                    whichever that is when the link opens)
-  //   range=d7&end=...                 chart window as a preset, counting
-  //                                    back from the latest run or, with a
-  //                                    run pinned, from the run named by end
+  //   range=d7                         chart window as a preset, counting
+  //                                    back from the latest run (or from the
+  //                                    pinned run, if that is older)
   //   from=...&to=...                  chart window as dragged, snapped to
   //                                    the first and last runs it shows
   //   (times are UTC; one without a zone is read as UTC)
@@ -618,7 +602,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // show the teams and colours it was copied with. So the address bar is bare
   // only until the first render.
   // Opening a link does not overwrite the saved view; the next change does.
-  const URL_KEYS = ['run', 'range', 'end', 'from', 'to', 'teams', 'metric', 'pool', 'sort', 'dir'];
+  const URL_KEYS = ['run', 'range', 'from', 'to', 'teams', 'metric', 'pool', 'sort', 'dir'];
   const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
   // UTC. A typed '+' offset arrives as a space, and a space may separate the
@@ -627,9 +611,10 @@ footer b { color: var(--ink); font-weight: 600; }
   const SPACED_OFFSET = new RegExp(String.raw`(${TIME}) (\d\d):?(\d\d)$`);
   const SPACED_TIME = new RegExp(String.raw`^(\d{4}-\d\d-\d\d) (${TIME})`);
   const NO_ZONE = new RegExp(`T${TIME}$`);
+  const DATE_T = /^(\d{4}-\d\d-\d\d)t/;
   function parseUtc(v) {
     if (typeof v !== 'string') return NaN;
-    const s = v.trim().replace(SPACED_OFFSET, '$1+$2:$3').replace(SPACED_TIME, '$1T$2');
+    const s = v.trim().replace(DATE_T, '$1T').replace(SPACED_OFFSET, '$1+$2:$3').replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }
   // Links name runs to the second; the CSV keeps milliseconds. Returns the
@@ -648,15 +633,17 @@ footer b { color: var(--ink); font-weight: 600; }
     const params = new URLSearchParams(location.search);
     if (!URL_KEYS.some((k) => params.has(k))) return null;
     const get = (k) => params.get(k) ?? undefined;
-    const linked = { metric: get('metric'), pool: get('pool'), range: get('range'), run: parseUtc(get('run')), end: parseUtc(get('end')) };
+    // Every keyword value is lower case; accept a hand-typed range=D7.
+    const word = (k) => get(k)?.toLowerCase();
+    const linked = { metric: word('metric'), pool: word('pool'), range: word('range'), run: parseUtc(get('run')) };
     const from = parseUtc(get('from'));
     const to = parseUtc(get('to'));
     if (from < to) {
       linked.range = 'custom';
       linked.window = [from, to];
     }
-    const key = get('sort');
-    const dir = get('dir')?.toLowerCase();
+    const key = word('sort');
+    const dir = word('dir');
     if (key) linked.sort = { key, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(key) };
     if (params.has('teams')) {
       const seen = new Set();
@@ -692,12 +679,8 @@ footer b { color: var(--ink); font-weight: 600; }
       // runs are hours apart, so it reopens on exactly the same runs.
       params.set('from', isoSecond(Math.floor(+view.t0 / 1000) * 1000));
       params.set('to', isoSecond(Math.ceil(+view.t1 / 1000) * 1000));
-    } else {
-      if (state.range !== DEFAULTS.range) params.set('range', state.range);
-      // Presets count back from the latest run, which moves as runs arrive.
-      // With a run pinned, the link names the run the window ended at, so the
-      // pinned run stays in view; unpinning returns to the latest run.
-      if (state.pinned != null && RANGE_DAYS[state.range]) params.set('end', isoSecond(+view.t1));
+    } else if (state.range !== DEFAULTS.range) {
+      params.set('range', state.range);
     }
     if (state.metric !== DEFAULTS.metric) params.set('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) params.set('pool', state.pool);
@@ -740,11 +723,9 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
-  // The reader picked a window, which replaces any linked anchor.
   function setWindow(range, win = null) {
     state.range = range;
     state.window = win;
-    state.end = null;
   }
 
   function currentWindow() {
@@ -754,8 +735,12 @@ footer b { color: var(--ink); font-weight: 600; }
       return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
     }
     const days = RANGE_DAYS[state.range];
-    const end = days && state.pinned != null && state.end != null ? Math.min(last, state.end) : last;
-    return [days ? Math.max(first, end - days * DAY_MS) : first, end];
+    if (!days) return [first, last];
+    // A preset keeps a pinned run in view: older than the span, the window
+    // ends at that run instead ("last 7 days" as of the standings shown).
+    const pinnedT = state.pinned == null ? last : +snapshots[state.pinned].t;
+    const end = pinnedT < last - days * DAY_MS ? pinnedT : last;
+    return [Math.max(first, end - days * DAY_MS), end];
   }
 
   function computeView() {
@@ -780,8 +765,6 @@ footer b { color: var(--ink); font-weight: 600; }
       }));
     });
     if (state.pinned != null && (state.pinned < i0 || state.pinned > i1)) state.pinned = null;
-    // The anchor exists for the pinned run; it goes when the pin does.
-    if (state.pinned == null) state.end = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -1294,10 +1277,11 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function pin(i) {
+    const [w0, w1] = currentWindow();
     state.pinned = i == null || i >= snapshots.length - 1 ? null : i;
-    if (state.pinned == null && state.end != null) {
-      // Unpinning drops a linked anchor, so the window moves to the latest run.
-      state.end = null;
+    const [n0, n1] = currentWindow();
+    if (n0 !== w0 || n1 !== w1) {
+      // The preset window moved to keep the pinned run in view.
       renderAll();
     } else {
       renderChart();
@@ -1338,24 +1322,21 @@ footer b { color: var(--ink); font-weight: 600; }
       showHover(nearestIndex(d3.pointer(e, node)[0]));
     });
     node.addEventListener('keydown', (e) => {
-      const lastVi = view.visible.length - 1;
-      let vi = (state.pinned ?? snapshots.length - 1) - view.i0;
-      if (e.key === 'ArrowLeft') vi -= 1;
-      else if (e.key === 'ArrowRight') vi += 1;
-      else if (e.key === 'Home') vi = 0;
-      else if (e.key === 'Escape' && state.end != null) {
-        // A linked anchor holds the window in the past; Escape releases it,
-        // and the window and table return to the latest run.
-        e.preventDefault();
-        pin(null);
-        showHover(view.visible.length - 1);
-        return;
-      } else if (e.key === 'End' || e.key === 'Escape') vi = lastVi;
+      // A preset window follows the pinned run, so the arrow keys can step
+      // past its edges; a dragged window stays put and bounds them.
+      const last = snapshots.length - 1;
+      const [lo, hi] = state.range === 'custom' ? [view.i0, view.i0 + view.visible.length - 1] : [0, last];
+      let i = state.pinned ?? last;
+      if (e.key === 'ArrowLeft') i -= 1;
+      else if (e.key === 'ArrowRight') i += 1;
+      else if (e.key === 'Home') i = view.i0;
+      else if (e.key === 'End') i = view.i0 + view.visible.length - 1;
+      // Escape returns to the latest run, or in a dragged window to its last.
+      else if (e.key === 'Escape') i = state.range === 'custom' ? view.i0 + view.visible.length - 1 : last;
       else return;
       e.preventDefault();
-      vi = Math.max(0, Math.min(lastVi, vi));
-      pin(view.i0 + vi);
-      showHover(vi);
+      pin(Math.max(lo, Math.min(hi, i)));
+      showHover((state.pinned ?? last) - view.i0);
     });
     node.addEventListener('blur', hideHover);
     let raf = 0;
@@ -1373,8 +1354,8 @@ footer b { color: var(--ink); font-weight: 600; }
 
   async function loadSnapshots() {
     const rows = await d3.csv(CSV_URL, { cache: 'no-store' }, d3.autoType);
-    const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
-    return [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
+    const runs = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
+    return [...runs].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
       t: new Date(t),
       byTeam: new Map(rs.map((r) => [r.team, r])),
     }));
@@ -1394,16 +1375,10 @@ footer b { color: var(--ink); font-weight: 600; }
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
         const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
-        const prevLast = +snapshots[snapshots.length - 1].t;
         snapshots = next;
         if (pinnedT != null) {
           const i = findRun(pinnedT);
           state.pinned = i < 0 || i >= snapshots.length - 1 ? null : i;
-          // A preset window moves forward with the new run; if that would
-          // leave the pinned run behind, hold the window where it was.
-          const days = RANGE_DAYS[state.range];
-          if (state.pinned != null && days && state.end == null
-              && pinnedT < +snapshots[snapshots.length - 1].t - days * DAY_MS) state.end = prevLast;
         }
         hideHover();
         renderAll();
