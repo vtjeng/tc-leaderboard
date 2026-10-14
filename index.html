@@ -586,7 +586,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // would replace the reader's saved teams.
     if (!view) return;
     save();
-    writeUrl();
+    writeUrlSoon();
   }
   function save() {
     try {
@@ -683,7 +683,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const key = word('sort');
     const dir = word('dir');
     if (key) linked.sort = { key, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(key) };
-    if (params.has('teams')) {
+    if (isOwn(params, 'teams')) {
       const seen = new Set();
       linked.highlight = [];
       params.get('teams').split(',').forEach((s, i) => {
@@ -698,8 +698,8 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   // Safari limits how often a page may replace its URL, and holding an arrow
-  // key on the chart pins a run per keystroke. So a pin is written at once,
-  // and pins that follow within URL_DELAY_MS are written together after it.
+  // key pins a run (or changes a radio) per keystroke. So a change is written
+  // at once, and changes that follow within URL_DELAY_MS together after it.
   // Safari allows 100 replacements per 30 s; this stays under it.
   const URL_DELAY_MS = 350;
   let urlTimer = 0;
@@ -1097,22 +1097,29 @@ footer b { color: var(--ink); font-weight: 600; }
     mini = { x, moveTo: (t0, t1) => brushG.call(brush.move, [x(t0), x(t1)]) };
   }
 
+  let dragPin; // the pinned run when the current drag began
   function onBrush({ selection, sourceEvent, type }) {
     if (!sourceEvent || !mini) return;
     hideHover();
     if (!selection) {
       // A click on the strip without a drag clears the window: show everything.
+      if (dragPin !== undefined) state.pinned = dragPin;
+      dragPin = undefined;
       setWindow('all');
       renderAll();
       commit();
       return;
     }
     setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+    // The pin is judged against the window the drag ends on, not each step.
+    if (dragPin === undefined) dragPin = state.pinned;
     const pinned = state.pinned;
+    state.pinned = dragPin;
     computeView();
     renderFilters();
     renderChart();
     if (type === 'end') {
+      dragPin = undefined;
       renderTable();
       commit();
     } else if (state.pinned !== pinned) {
@@ -1401,7 +1408,6 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function renderAll() {
-    if (!snapshots.length) return; // a control changed before the data loaded
     computeView();
     renderFilters();
     renderLegend();
@@ -1436,7 +1442,6 @@ footer b { color: var(--ink); font-weight: 600; }
     setControlsEnabled(false);
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
-        if (!view) return;
         state[el.name] = el.value;
         hideHover();
         renderAll();
@@ -1444,7 +1449,6 @@ footer b { color: var(--ink); font-weight: 600; }
       });
     });
     $('range').addEventListener('change', (e) => {
-      if (!view) return;
       setWindow(e.target.value);
       // A picked preset shows its latest window; a pinned run outside that
       // goes, rather than sliding the window straight back.
@@ -1486,11 +1490,12 @@ footer b { color: var(--ink); font-weight: 600; }
       else if (e.key === 'ArrowRight') i = at + 1;
       else if (e.key === 'Home') i = view.i0;
       else if (e.key === 'End') i = end;
-      // Escape returns to the latest run, or in a dragged window to its last.
-      else if (e.key === 'Escape') i = custom ? end : last;
+      // Escape returns to the latest run, or in a dragged window to its last
+      // (with nothing pinned there is nothing to return from).
+      else if (e.key === 'Escape') i = !custom ? last : state.pinned == null ? null : end;
       else return;
       e.preventDefault();
-      if (i < lo || i > hi) return;
+      if (i == null || i < lo || i > hi) return;
       pin(i);
       showHover((state.pinned ?? last) - view.i0);
     });
