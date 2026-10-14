@@ -580,37 +580,29 @@ footer b { color: var(--ink); font-weight: 600; }
   const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
   // Date.parse reads a date-time without a zone as local time; links are UTC.
   const parseUtc = (v) => Date.parse(typeof v === 'string' && /T[\d:.]+$/.test(v) ? v + 'Z' : v);
+  // Within teams, commas separate slots; a comma or percent sign in a team
+  // name is escaped so the name still round-trips.
+  const escapeTeam = (team) => team.replace(/[%,]/g, (c) => (c === '%' ? '%25' : '%2C'));
+  const unescapeTeam = (s) => s.replace(/%25|%2C/gi, (m) => (m === '%25' ? '%' : ','));
 
-  // Team names are split on literal commas before decoding, so a name that
-  // contains one (encoded as %2C) still round-trips.
   function readUrl() {
-    const raw = new Map();
-    for (const part of location.search.slice(1).split('&')) {
-      if (!part) continue;
-      const eq = part.indexOf('=');
-      let k;
-      try { k = decodeURIComponent(eq < 0 ? part : part.slice(0, eq)); } catch { continue; }
-      if (URL_KEYS.includes(k) && !raw.has(k)) raw.set(k, eq < 0 ? '' : part.slice(eq + 1).replace(/\+/g, ' '));
-    }
-    if (!raw.size) return null;
-    const dec = (k) => {
-      try { return raw.has(k) ? decodeURIComponent(raw.get(k)) : undefined; } catch { return undefined; }
-    };
-    const view = { metric: dec('metric'), pool: dec('pool'), range: dec('range'), run: parseUtc(dec('run')) };
-    const from = parseUtc(dec('from'));
-    const to = parseUtc(dec('to'));
+    const params = new URLSearchParams(location.search);
+    if (!URL_KEYS.some((k) => params.has(k))) return null;
+    const get = (k) => params.get(k) ?? undefined;
+    const view = { metric: get('metric'), pool: get('pool'), range: get('range'), run: parseUtc(get('run')) };
+    const from = parseUtc(get('from'));
+    const to = parseUtc(get('to'));
     if (Number.isFinite(from) && Number.isFinite(to) && from < to) {
       view.range = 'custom';
       view.window = [from, to];
     }
-    const key = dec('sort');
-    if (key) view.sort = { key, dir: dec('dir') ?? firstDir(key) };
-    if (raw.has('teams')) {
+    const key = get('sort');
+    if (key) view.sort = { key, dir: get('dir') ?? firstDir(key) };
+    if (params.has('teams')) {
       const seen = new Set();
       view.highlight = [];
-      raw.get('teams').split(',').forEach((enc, i) => {
-        let team;
-        try { team = decodeURIComponent(enc); } catch { return; }
+      params.get('teams').split(',').forEach((s, i) => {
+        const team = unescapeTeam(s);
         if (team && !seen.has(team)) {
           seen.add(team);
           view.highlight.push([team, i + 1]);
@@ -621,9 +613,8 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function writeUrl() {
-    const enc = (v) => encodeURIComponent(v).replace(/%3A/g, ':');
-    const params = [];
-    if (state.pinned != null) params.push(['run', isoSecond(+snapshots[state.pinned].t)]);
+    const params = new URLSearchParams();
+    if (state.pinned != null) params.set('run', isoSecond(+snapshots[state.pinned].t));
     // Presets count back from the latest run, which moves as runs arrive. With
     // a run pinned the view is a fixed point in history, so the link fixes the
     // window too; otherwise the preset follows the latest run, as the table does.
@@ -631,21 +622,24 @@ footer b { color: var(--ink); font-weight: 600; }
     if (custom || state.pinned != null) {
       const [w0, w1] = custom ? state.window : currentWindow();
       // Rounded outward to the minute: the window keeps every run it showed.
-      params.push(['from', isoMinute(w0)]);
-      params.push(['to', isoMinute(Math.ceil(w1 / 60000) * 60000)]);
+      params.set('from', isoMinute(w0));
+      params.set('to', isoMinute(Math.ceil(w1 / 60000) * 60000));
     } else if (state.range !== DEFAULTS.range) {
-      params.push(['range', state.range]);
+      params.set('range', state.range);
     }
-    if (state.metric !== DEFAULTS.metric) params.push(['metric', state.metric]);
-    if (state.pool !== DEFAULTS.pool) params.push(['pool', state.pool]);
+    if (state.metric !== DEFAULTS.metric) params.set('metric', state.metric);
+    if (state.pool !== DEFAULTS.pool) params.set('pool', state.pool);
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
-      params.push(['sort', state.sort.key]);
-      if (state.sort.dir !== firstDir(state.sort.key)) params.push(['dir', state.sort.dir]);
+      params.set('sort', state.sort.key);
+      if (state.sort.dir !== firstDir(state.sort.key)) params.set('dir', state.sort.dir);
     }
     const slots = [];
     state.highlight.forEach((slot, team) => { slots[slot - 1] = team; });
-    const teams = Array.from(slots, (team) => (team == null ? '' : encodeURIComponent(team))).join(',');
-    const query = params.map(([k, v]) => `${k}=${enc(v)}`).concat(`teams=${teams}`).join('&');
+    params.set('teams', Array.from(slots, (team) => (team == null ? '' : escapeTeam(team))).join(','));
+    // Commas and colons need no escaping in a query value; leaving them bare
+    // keeps the link readable. Escaped characters in team names are now %25...,
+    // so this cannot touch them.
+    const query = params.toString().replace(/%2C/g, ',').replace(/%3A/g, ':');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
     // Safari limits how often a page may replace its URL; past the limit the
