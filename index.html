@@ -508,6 +508,7 @@ footer b { color: var(--ink); font-weight: 600; }
   const miniSvg = d3.select('#mini');
 
   let snapshots = [];   // [{ t: Date, byTeam: Map(team -> row) }], oldest first
+  let knownTeams = new Set(); // every team in snapshots
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // scale and brush from the last overview render
@@ -645,7 +646,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // Names like from and sort are common in other people's links too
   // (from=newsletter), so a parameter is the view's only if its value parses.
   const isTime = (v) => Number.isFinite(parseUtc(v));
-  const isKnownTeam = (team) => snapshots.some((s) => s.byTeam.has(team));
+  const isKnownTeam = (team) => knownTeams.has(team);
   // Parameters that only qualify another (dir, to, a preset's from) do not
   // claim the URL on their own.
   const VALID = {
@@ -699,7 +700,8 @@ footer b { color: var(--ink); font-weight: 600; }
   // Safari limits how often a page may replace its URL, and holding an arrow
   // key on the chart pins a run per keystroke. So a pin is written at once,
   // and pins that follow within URL_DELAY_MS are written together after it.
-  const URL_DELAY_MS = 250;
+  // Safari allows 100 replacements per 30 s; this stays under it.
+  const URL_DELAY_MS = 350;
   let urlTimer = 0;
   let urlCooling = false;
   let urlPending = false;
@@ -734,30 +736,39 @@ footer b { color: var(--ink); font-weight: 600; }
     // Collected before deleting: whether dir or to is the view's depends on
     // sort and from.
     URL_KEYS.filter((k) => isOwn(params, k)).forEach((k) => params.delete(k));
-    if (state.pinned != null) params.set('run', isoSecond(+snapshots[state.pinned].t));
+    const written = new Set();
+    const put = (k, v) => {
+      params.set(k, v);
+      written.add(k);
+    };
+    if (state.pinned != null) put('run', isoSecond(+snapshots[state.pinned].t));
     if (state.range === 'custom' && state.window) {
       const [from, to] = linkWindow();
-      params.set('from', isoSecond(from));
-      params.set('to', isoSecond(to));
+      put('from', isoSecond(from));
+      put('to', isoSecond(to));
     } else {
-      if (state.range !== DEFAULTS.range) params.set('range', state.range);
+      if (state.range !== DEFAULTS.range) put('range', state.range);
       if (state.window) {
-        // Whole seconds, rounded so the window keeps the run at its end.
+        // Whole seconds: the earlier or later second, whichever reopens the
+        // window on the same runs.
         const [w0, w1] = state.window;
-        const last = byTime.right(snapshots, w1) - 1;
-        const from = Math.floor(w0 / 1000) * 1000;
-        params.set('from', isoSecond(+snapshots[last].t > from + (w1 - w0) ? Math.ceil(w0 / 1000) * 1000 : from));
+        const runs = runsIn(state.window).join();
+        const lo = Math.floor(w0 / 1000) * 1000;
+        put('from', isoSecond([lo, lo + 1000].find((c) => runsIn([c, c + w1 - w0]).join() === runs) ?? lo));
       }
     }
-    if (state.metric !== DEFAULTS.metric) params.set('metric', state.metric);
-    if (state.pool !== DEFAULTS.pool) params.set('pool', state.pool);
+    if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
+    if (state.pool !== DEFAULTS.pool) put('pool', state.pool);
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
-      params.set('sort', state.sort.key);
-      if (state.sort.dir !== firstDir(state.sort.key)) params.set('dir', state.sort.dir);
+      put('sort', state.sort.key);
+      if (state.sort.dir !== firstDir(state.sort.key)) put('dir', state.sort.dir);
     }
     const slots = [];
     state.highlight.forEach((slot, team) => { slots[slot - 1] = team; });
-    params.set('teams', Array.from(slots, (team) => (team == null ? '' : escapeTeam(team))).join(','));
+    put('teams', Array.from(slots, (team) => (team == null ? '' : escapeTeam(team))).join(','));
+    // A foreign dir, to or from that the parameters just written would make
+    // meaningful (dir next to our sort) is dropped rather than misread.
+    ['dir', 'to', 'from'].forEach((k) => { if (!written.has(k) && isOwn(params, k)) params.delete(k); });
     // Commas and colons need no escaping in a query value; leaving them bare
     // keeps the link readable. Escaped characters in team names are now %25...,
     // so this cannot touch them.
@@ -1415,11 +1426,16 @@ footer b { color: var(--ink); font-weight: 600; }
     writeUrlSoon();
   }
 
+  // The controls wait for the data: until then the link or saved view has
+  // not been applied, and a change would be lost.
+  function setControlsEnabled(on) {
+    document.querySelectorAll('.opts input, #range').forEach((el) => { el.disabled = !on; });
+  }
+
   function wire() {
+    setControlsEnabled(false);
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
-        // Before the data loads, the link or saved view decides; the controls
-        // are reset to it once it has.
         if (!view) return;
         state[el.name] = el.value;
         hideHover();
@@ -1501,6 +1517,11 @@ footer b { color: var(--ink); font-weight: 600; }
     }));
   }
 
+  function setSnapshots(next) {
+    snapshots = next;
+    knownTeams = new Set(next.flatMap((s) => [...s.byTeam.keys()]));
+  }
+
   function renderLatestRun() {
     const latestT = snapshots[snapshots.length - 1].t;
     const ageH = (Date.now() - latestT) / 3600000;
@@ -1515,7 +1536,7 @@ footer b { color: var(--ink); font-weight: 600; }
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
         const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
-        snapshots = next;
+        setSnapshots(next);
         if (pinnedT != null) {
           state.pinned = normalisePin(findRun(pinnedT));
         }
@@ -1532,7 +1553,7 @@ footer b { color: var(--ink); font-weight: 600; }
   async function main() {
     wire();
     try {
-      snapshots = await loadSnapshots();
+      setSnapshots(await loadSnapshots());
     } catch (err) {
       $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
       return;
@@ -1547,6 +1568,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     renderAll();
     writeUrl();
+    setControlsEnabled(true);
     setInterval(refresh, REFRESH_MS);
   }
 
