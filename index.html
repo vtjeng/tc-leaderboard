@@ -570,7 +570,10 @@ footer b { color: var(--ink); font-weight: 600; }
     // slides to the run itself.
     const days = RANGE_DAYS[state.range];
     const t = +snapshots[state.pinned].t;
-    if (days && linked.from <= t && t <= linked.from + days * DAY_MS) state.window = [linked.from, linked.from + days * DAY_MS];
+    // Links give times to the second, so allow a second either side; the
+    // slide then settles the window exactly on the run.
+    const span = days * DAY_MS;
+    if (days && linked.from - 1000 <= t && t <= linked.from + span + 1000) state.window = [linked.from, linked.from + span];
     return named;
   }
 
@@ -656,7 +659,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // Parameters that only qualify another (dir, to, a preset's from) do not
   // claim the URL on their own.
   const VALID = {
-    run: isTime,
+    run: (v) => findRun(parseUtc(v)) >= 0,
     from: (v, p) => isTime(v) && (parseUtc(v) < parseUtc(p.get('to')) || isOwn(p, 'run')),
     to: (v, p) => parseUtc(p.get('from')) < parseUtc(v),
     range: (v) => hasOwn(RANGE_DAYS, v.toLowerCase()),
@@ -1108,6 +1111,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // on, not each step.
   let drag = null;
   let resizePending = false;
+  let refreshPending = false; // a refresh skipped during a drag
   function onBrush({ selection, sourceEvent, type }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
@@ -1120,6 +1124,9 @@ footer b { color: var(--ink); font-weight: 600; }
     const empty = !selection || selection[1] - selection[0] < 1;
     if (type === 'brush') {
       if (empty) return;
+      // A click's sub-pixel jitter is not a drag.
+      const { start } = drag;
+      if (!drag.moved && start && Math.abs(start[0] - selection[0]) < 0.5 && Math.abs(start[1] - selection[1]) < 0.5) return;
       drag.moved = true;
       setWindow('custom', selection.map((px) => +mini.x.invert(px)));
       const shown = state.pinned;
@@ -1160,6 +1167,7 @@ footer b { color: var(--ink); font-weight: 600; }
       commit();
     }
     resizePending = false;
+    if (refreshPending) refresh();
   }
 
   function nearestIndex(px) {
@@ -1451,12 +1459,14 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = normalisePin(i);
+    // A pin made mid-drag (arrow keys) is the one the drag ends with.
+    if (drag) drag.pin = state.pinned;
     if (slidePreset()) {
       // The preset window slid; move the overview's window to match rather
       // than redrawing the strip.
       buildView();
       renderFilters();
-      mini.moveTo(view.t0, view.t1);
+      if (!drag) mini.moveTo(view.t0, view.t1);
     }
     renderChart();
     renderTable();
@@ -1525,8 +1535,8 @@ footer b { color: var(--ink); font-weight: 600; }
       // (with nothing pinned there is nothing to return from).
       else if (e.key === 'Escape') i = !custom ? last : state.pinned == null ? null : end;
       else return;
-      e.preventDefault();
       if (i == null || i < lo || i > hi) return;
+      e.preventDefault();
       pin(i);
       showHover((state.pinned ?? last) - view.i0);
     });
@@ -1579,7 +1589,8 @@ footer b { color: var(--ink); font-weight: 600; }
   async function refresh() {
     try {
       const next = await loadSnapshots();
-      // Redrawing the overview would cut a drag short; the next tick retries.
+      // Redrawing the overview would cut a drag short; it waits for the end.
+      refreshPending = Boolean(drag);
       if (!drag && +next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
         const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
