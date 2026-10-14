@@ -555,8 +555,8 @@ footer b { color: var(--ink); font-weight: 600; }
     const named = applyView(linked);
     state.pinned = normalisePin(findRun(linked.run));
     if (state.pinned == null) return named;
-    const t = +snapshots[state.pinned].t;
-    if (state.range === 'custom' && (t < state.window[0] || t > state.window[1])) {
+    const [i0, i1] = runsIn(currentWindow());
+    if (state.range === 'custom' && (state.pinned < i0 || state.pinned > i1)) {
       // The run is the link's point; a window that leaves it out gives way.
       setWindow(DEFAULTS.range);
     }
@@ -636,10 +636,24 @@ footer b { color: var(--ink); font-weight: 600; }
   const escapeTeam = (team) => team.replace(/[%,]/g, (c) => (c === '%' ? '%25' : '%2C'));
   const unescapeTeam = (s) => s.replace(/%25|%2C/gi, (m) => (m === '%25' ? '%' : ','));
 
+  // Names like from and sort are common in other people's links too
+  // (from=newsletter), so a parameter is the view's only if its value parses.
+  const isTime = (v) => Number.isFinite(parseUtc(v));
+  const VALID = {
+    run: isTime, from: isTime, to: isTime,
+    range: (v) => hasOwn(RANGE_DAYS, v.toLowerCase()),
+    metric: (v) => hasOwn(METRICS, v.toLowerCase()),
+    pool: (v) => hasOwn(POOL_TEXT, v.toLowerCase()),
+    sort: (v) => parseSortKey(v.toLowerCase()) != null,
+    dir: (v) => /^(asc|desc)$/i.test(v),
+    teams: () => true,
+  };
+  const isOwn = (params, k) => params.has(k) && VALID[k](params.get(k));
+
   function readUrl() {
     const params = new URLSearchParams(location.search);
-    if (!URL_KEYS.some((k) => params.has(k))) return null;
-    const get = (k) => params.get(k) ?? undefined;
+    if (!URL_KEYS.some((k) => isOwn(params, k))) return null;
+    const get = (k) => (isOwn(params, k) ? params.get(k) : undefined);
     // Every keyword value is lower case; accept a hand-typed range=D7.
     const word = (k) => get(k)?.toLowerCase();
     const linked = { metric: word('metric'), pool: word('pool'), range: word('range'), run: parseUtc(get('run')) };
@@ -648,7 +662,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (from < to) {
       linked.range = 'custom';
       linked.window = [from, to];
-    } else if (!params.has('to')) {
+    } else if (get('to') == null) {
       linked.from = from;
     }
     const key = word('sort');
@@ -690,8 +704,9 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function flushUrl() {
     // Parameters that are not the view's (utm_source and the like) stay.
+    if (!view) return;
     const params = new URLSearchParams(location.search);
-    URL_KEYS.forEach((k) => params.delete(k));
+    URL_KEYS.forEach((k) => { if (isOwn(params, k)) params.delete(k); });
     if (state.pinned != null) params.set('run', isoSecond(+snapshots[state.pinned].t));
     if (state.range === 'custom' && state.window) {
       const [from, to] = linkWindow();
@@ -699,7 +714,13 @@ footer b { color: var(--ink); font-weight: 600; }
       params.set('to', isoSecond(to));
     } else {
       if (state.range !== DEFAULTS.range) params.set('range', state.range);
-      if (state.window) params.set('from', isoSecond(state.window[0]));
+      if (state.window) {
+        // Whole seconds, rounded so the window keeps the run at its end.
+        const [w0, w1] = state.window;
+        const last = byTime.right(snapshots, w1) - 1;
+        const from = Math.floor(w0 / 1000) * 1000;
+        params.set('from', isoSecond(+snapshots[last].t > from + (w1 - w0) ? Math.ceil(w0 / 1000) * 1000 : from));
+      }
     }
     if (state.metric !== DEFAULTS.metric) params.set('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) params.set('pool', state.pool);
@@ -773,17 +794,22 @@ footer b { color: var(--ink); font-weight: 600; }
     else if (t > w1) state.window = [t - span, t];
   }
 
-  function computeView() {
-    slidePreset();
-    const metric = METRICS[state.metric];
-    const [w0, w1] = currentWindow();
+  // The first and last runs a window shows. A window narrower than the gap
+  // between two runs still shows two runs.
+  function runsIn([w0, w1]) {
     let i0 = byTime.left(snapshots, w0);
     let i1 = byTime.right(snapshots, w1) - 1;
-    // A window narrower than the gap between two runs still shows two runs.
     if (i1 - i0 < 1) {
       i0 = Math.max(0, Math.min(i0, snapshots.length - 2));
       i1 = i0 + 1;
     }
+    return [i0, i1];
+  }
+
+  function computeView() {
+    slidePreset();
+    const metric = METRICS[state.metric];
+    const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
     const teams = new Set();
     visible.forEach((s) => s.byTeam.forEach((_, team) => teams.add(team)));
@@ -1024,14 +1050,13 @@ footer b { color: var(--ink); font-weight: 600; }
     computeView();
     renderFilters();
     renderChart();
-    if (state.pinned !== pinned) {
-      // The window left the pinned run behind: the table returns to the latest.
-      renderTable();
-      writeUrlSoon();
-    }
     if (type === 'end') {
       renderTable();
       commit();
+    } else if (state.pinned !== pinned) {
+      // The window left the pinned run behind: the table returns to the latest.
+      renderTable();
+      writeUrlSoon();
     }
   }
 
@@ -1314,6 +1339,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function renderAll() {
+    if (!snapshots.length) return; // a control changed before the data loaded
     computeView();
     renderFilters();
     renderLegend();
@@ -1324,13 +1350,10 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = normalisePin(i);
-    const prev = view;
     computeView();
-    if (view.i0 !== prev.i0 || view.visible.length !== prev.visible.length) {
-      // A preset window slid; move the overview's window rather than
-      // redrawing the strip.
-      mini.moveTo(view.t0, view.t1);
-    }
+    // A preset window may have slid; move the overview's window to match
+    // rather than redrawing the strip.
+    mini.moveTo(view.t0, view.t1);
     renderChart();
     renderTable();
     writeUrlSoon();
