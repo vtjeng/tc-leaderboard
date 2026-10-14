@@ -564,10 +564,13 @@ footer b { color: var(--ink); font-weight: 600; }
     const [i0, i1] = runsIn(currentWindow());
     if (state.range === 'custom' && (state.pinned < i0 || state.pinned > i1)) {
       // The run is the link's point; a window that leaves it out gives way.
-      setWindow(hasOwn(RANGE_DAYS, linked.range) ? linked.range : DEFAULTS.range);
+      setWindow(linked.range ?? DEFAULTS.range); // readUrl keeps only a valid preset
     }
+    // A slid window counts only if it shows the run; otherwise the preset
+    // slides to the run itself.
     const days = RANGE_DAYS[state.range];
-    if (days && Number.isFinite(linked.from)) state.window = [linked.from, linked.from + days * DAY_MS];
+    const t = +snapshots[state.pinned].t;
+    if (days && linked.from <= t && t <= linked.from + days * DAY_MS) state.window = [linked.from, linked.from + days * DAY_MS];
     return named;
   }
 
@@ -706,9 +709,15 @@ footer b { color: var(--ink); font-weight: 600; }
   const URL_BUDGET_MS = 30000;
   let urlWrites = []; // times of recent writes
   let urlTimer = 0;
+  let urlFailures = 0; // refused writes in a row
+  let urlRetryAt = 0; // after a refusal, no write before this
   function writeUrl() {
     clearTimeout(urlTimer);
     const now = Date.now();
+    if (now < urlRetryAt) {
+      urlTimer = setTimeout(writeUrl, urlRetryAt - now);
+      return;
+    }
     urlWrites = urlWrites.filter((t) => now - t < URL_BUDGET_MS);
     if (urlWrites.length < URL_BUDGET) flushUrl();
     else urlTimer = setTimeout(writeUrl, urlWrites[0] + URL_BUDGET_MS - now);
@@ -773,7 +782,9 @@ footer b { color: var(--ink); font-weight: 600; }
       // Refused anyway: try again later, backing off so a page that may never
       // replace its URL (a sandboxed frame) rarely tries.
       urlFailures += 1;
-      urlTimer = setTimeout(writeUrl, Math.min(60000, 1000 * 2 ** urlFailures));
+      const delay = Math.min(60000, 1000 * 2 ** urlFailures);
+      urlRetryAt = Date.now() + delay;
+      urlTimer = setTimeout(writeUrl, delay);
     }
   }
 
@@ -1029,6 +1040,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const margin = { top: 4, right: 14, bottom: 18, left: 52 };
     miniSvg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
     miniSvg.selectAll('*').remove();
+    drag = null; // the old brush, and any drag on it, are gone
 
     const series = new Map();
     snapshots.forEach((s, i) => s.byTeam.forEach((r, team) => {
@@ -1067,7 +1079,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const brush = d3.brushX()
       .extent([[margin.left, top], [W - margin.right, bottom]])
       .handleSize(14)
-      .on('brush end', (e) => { decorate(e.selection); onBrush(e); });
+      .on('start brush end', (e) => { decorate(e.selection); onBrush(e); });
     const brushG = g.append('g').attr('class', 'brush').call(brush);
 
     // Grips on both edges (resize); the window itself shows a grab cursor
@@ -1091,42 +1103,63 @@ footer b { color: var(--ink); font-weight: 600; }
     mini.moveTo(view.t0, view.t1);
   }
 
-  let dragPin; // the pinned run when the current drag began
+  // A drag on the overview: the pin and selection it began with, and whether
+  // the window has moved. The pin is judged against the window the drag ends
+  // on, not each step.
+  let drag = null;
+  let resizePending = false;
   function onBrush({ selection, sourceEvent, type }) {
     if (!sourceEvent || !mini) return;
+    if (type === 'start') {
+      drag = { pin: state.pinned, start: selection && [...selection], moved: false };
+      return;
+    }
+    drag ??= { pin: state.pinned, start: null, moved: false };
     // A click on the strip starts a zero-width selection; it is not a window
     // until the drag widens it, and a drag released that narrow clears it.
-    const tiny = selection && selection[1] - selection[0] < 1;
-    if (tiny && type !== 'end') return;
+    const empty = !selection || selection[1] - selection[0] < 1;
+    if (type === 'brush') {
+      if (empty) return;
+      drag.moved = true;
+      setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+      const shown = state.pinned;
+      state.pinned = drag.pin;
+      hideHover();
+      computeView();
+      renderFilters();
+      renderChart();
+      if (state.pinned !== shown) {
+        // The window left the pinned run behind: the table shows the latest.
+        renderTable();
+        writeUrl();
+      }
+      return;
+    }
+    const { pin, start, moved } = drag;
+    drag = null;
     hideHover();
-    if (!selection || tiny) {
-      // A click on the strip without a drag clears the window: show everything.
-      if (dragPin !== undefined) state.pinned = dragPin;
-      dragPin = undefined;
+    state.pinned = pin;
+    if (empty) {
+      // A click on the strip outside the window clears it: show everything.
       setWindow('all');
       renderAll();
       commit();
-      return;
-    }
-    // A click inside the window without dragging leaves the window as it was.
-    if (type === 'end' && dragPin === undefined) return;
-    setWindow('custom', selection.map((px) => +mini.x.invert(px)));
-    // The pin is judged against the window the drag ends on, not each step.
-    if (dragPin === undefined) dragPin = state.pinned;
-    const pinned = state.pinned;
-    state.pinned = dragPin;
-    computeView();
-    renderFilters();
-    renderChart();
-    if (type === 'end') {
-      dragPin = undefined;
-      renderTable();
+    } else if (!moved && start && Math.abs(start[0] - selection[0]) < 0.5 && Math.abs(start[1] - selection[1]) < 0.5) {
+      // A click inside the window without dragging leaves it as it was.
+      if (resizePending) renderAll();
+    } else {
+      setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+      if (resizePending) {
+        renderAll();
+      } else {
+        computeView();
+        renderFilters();
+        renderChart();
+        renderTable();
+      }
       commit();
-    } else if (state.pinned !== pinned) {
-      // The window left the pinned run behind: the table returns to the latest.
-      renderTable();
-      writeUrl();
     }
+    resizePending = false;
   }
 
   function nearestIndex(px) {
@@ -1501,7 +1534,17 @@ footer b { color: var(--ink); font-weight: 600; }
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { if (view) { hideHover(); renderChart(); renderMini(); } });
+      raf = requestAnimationFrame(() => {
+        if (!view) return;
+        // Redrawing the overview mid-drag would cut the drag short; it waits.
+        if (drag) {
+          resizePending = true;
+          return;
+        }
+        hideHover();
+        renderChart();
+        renderMini();
+      });
     }).observe(chartEl);
   }
 
@@ -1537,7 +1580,7 @@ footer b { color: var(--ink); font-weight: 600; }
     try {
       const next = await loadSnapshots();
       // Redrawing the overview would cut a drag short; the next tick retries.
-      if (dragPin === undefined && +next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
+      if (!drag && +next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         // pinned is an index; find the same run in the new list.
         const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
         setSnapshots(next);
