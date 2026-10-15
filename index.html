@@ -390,7 +390,7 @@ footer b { color: var(--ink); font-weight: 600; }
               <option value="d7">Last 7 days</option>
             </select>
           </span>
-          <span class="range-end" id="range-end" aria-live="polite"></span>
+          <span class="range-end" id="range-end" aria-live="polite">Live</span>
           <button type="button" class="btn" id="range-freeze" disabled>Freeze</button>
         </div>
       </div>
@@ -554,7 +554,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // inherited one like toString.
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
-    if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration > 0)) state.duration = saved.duration;
+    if (saved.duration === null || (saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) state.duration = saved.duration;
     // An end before the data would show none of it; one after the latest run
     // (saved against newer data) holds at it, rather than letting the frozen
     // window grow as runs arrive.
@@ -820,7 +820,7 @@ footer b { color: var(--ink); font-weight: 600; }
     let i1 = byTime.right(snapshots, w1) - 1;
     if (i1 - i0 < 1) {
       i0 = Math.max(0, Math.min(i0, snapshots.length - 2));
-      i1 = i0 + 1;
+      i1 = Math.min(i0 + 1, snapshots.length - 1); // (one run, if that is all)
     }
     return [i0, i1];
   }
@@ -1158,7 +1158,6 @@ footer b { color: var(--ink); font-weight: 600; }
       drag.moved = true;
       mini.decorate(selection);
       const [t0, t1] = selection.map((px) => +mini.x.invert(px));
-      drag.raw = [t0, t1];
       setWindow(t1 - t0, t1);
       hideHover();
       computeView();
@@ -1169,7 +1168,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // clears it: show everything. A press that never moved the window leaves
     // it as it was, with nothing to redraw unless data arrived meanwhile.
     // Anything else is the dragged window.
-    if (empty || (drag.fresh && !drag.moved)) setWindow(null);
+    if (empty || (drag.fresh && !drag.moved)) setWindow(null, state.end); // as 'All' in the menu does
     else if (drag.moved) setDraggedWindow(...selection.map((px) => +mini.x.invert(px)));
     else if (!pendingSnapshots && !redrawAfterDrag) {
       drag = null;
@@ -1512,10 +1511,10 @@ footer b { color: var(--ink); font-weight: 600; }
       renderAll();
       commit();
     });
-    // Freezing ends the window at the latest run (rounded up to the minute,
-    // as dragged windows are); going live lets it follow new runs.
+    // Freezing ends the window at the latest run; going live lets it follow
+    // new runs.
     $('range-freeze').addEventListener('click', () => {
-      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
+      setWindow(state.duration, state.end == null ? +snapshots[snapshots.length - 1].t : null);
       hideHover();
       renderAll();
       commit();
@@ -1582,7 +1581,8 @@ footer b { color: var(--ink); font-weight: 600; }
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
       if (drag) {
-        if (drag.raw) setDraggedWindow(...drag.raw);
+        // Mid-drag the window is [end - duration, end], as dragged so far.
+        if (drag.moved) setDraggedWindow(state.end - state.duration, state.end);
         finishDrag();
       }
     };
