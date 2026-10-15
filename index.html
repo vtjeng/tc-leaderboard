@@ -542,7 +542,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null, autoPin: false };
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -592,10 +592,12 @@ footer b { color: var(--ink); font-weight: 600; }
     return saved.highlight.length === 0 || state.highlight.size > 0;
   }
 
-  // state.pinned is the pinned run's time, so it names the same run however
-  // the list of runs changes. A pinned run holds, even the latest; only no pin
-  // (Show latest, Escape) follows new runs.
+  // state.pinned is what the standings show: null follows the latest run; a
+  // run's time holds that run (even the latest), however the list of runs
+  // changes; 'end' holds a frozen window's last run, wherever the window is.
   const pinTime = (i) => (i == null || i < 0 ? null : +snapshots[i].t);
+  // A run, as a pin: a frozen window's last run is 'end'.
+  const pinFor = (i) => (state.end != null && i != null && i === runAsOf(state.end) ? 'end' : pinTime(i));
   // The last run at or before a time (the earliest, if before them all; -1
   // for no time).
   function runAsOf(ms) {
@@ -605,6 +607,8 @@ footer b { color: var(--ink); font-weight: 600; }
   // the data.
   function pinnedIndex() {
     if (state.pinned == null) return null;
+    // Mid-drag, the window's last run is the previewed window's.
+    if (state.pinned === 'end') return runAsOf(drag?.preview ? drag.preview[1] : state.end);
     const i = byTime.left(snapshots, state.pinned);
     return i < snapshots.length && +snapshots[i].t === state.pinned ? i : null;
   }
@@ -621,10 +625,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // chart window.
   function applyLink(linked) {
     const named = applyView(linked);
-    state.pinned = pinTime(runAsOf(linked.asOf));
-    // A frozen window's link names its last run when the page pinned it (see
+    // A frozen window's link names its last run when the window held it (see
     // setWindow); that pin stays the window's, to go when it goes live.
-    state.autoPin = state.end != null && state.pinned != null && pinnedIndex() === runAsOf(state.end);
+    state.pinned = pinFor(runAsOf(linked.asOf));
     return named;
   }
 
@@ -782,7 +785,8 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!view) return;
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
-    if (state.pinned != null) put('as_of', isoMinute(ceilMinute(state.pinned)));
+    const pinnedAt = pinnedIndex();
+    if (pinnedAt != null) put('as_of', isoMinute(ceilMinute(+snapshots[pinnedAt].t)));
     if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
     if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
@@ -834,28 +838,20 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
-  // A frozen window holds its standings too: unless the reader has pinned a
-  // run, it pins the window's last run, and marks the pin as its own
-  // (autoPin) so the pin moves with the window and goes when it goes live. A
-  // pin the reader set is never touched here.
+  // A frozen window holds its standings too (pinned 'end'), unless the reader
+  // has pinned a run; going live, it follows new runs again. A pin the reader
+  // set elsewhere is never touched here.
   function setWindow(duration, end = null) {
     // (Only a window that moves takes an empty pin: after Show latest, a new
     // duration on the same frozen end leaves the standings following.)
     const moved = end !== state.end;
     state.duration = duration;
     state.end = end;
-    if (end != null && (state.autoPin || (state.pinned == null && moved))) holdFrozen();
-    // A pin already on the frozen window's last run is the window's, too.
-    else if (end != null && state.pinned != null && pinnedIndex() === runAsOf(end)) state.autoPin = true;
-    else if (end == null && state.autoPin) {
-      state.pinned = null;
-      state.autoPin = false;
+    if (end == null) {
+      if (state.pinned === 'end') state.pinned = null;
+    } else if (state.pinned == null ? moved : state.pinned !== 'end' && pinnedIndex() === runAsOf(end)) {
+      state.pinned = 'end'; // (a pin already on the window's last run is the window's, too)
     }
-  }
-  // Pins a frozen window's last run as the window's own.
-  function holdFrozen() {
-    state.pinned = +snapshots[runAsOf(state.end)].t;
-    state.autoPin = true;
   }
 
   function currentWindow() {
@@ -912,14 +908,8 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    // A pinned run that has left the data is unpinned.
-    // A frozen window's own pin follows its last run, should the runs change
-    // on refresh; a run of the reader's that has left the data is unpinned.
-    if (state.autoPin && state.end != null) holdFrozen();
-    else if (pinnedIndex() == null) {
-      state.pinned = null;
-      state.autoPin = false;
-    }
+    // A run of the reader's that has left the data is unpinned.
+    if (pinnedIndex() == null) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -1025,8 +1015,10 @@ footer b { color: var(--ink); font-weight: 600; }
     // The standings may show a run outside the window; say so, as there is no
     // marker to draw.
     // (With nothing pinned they show the latest run, after a frozen window.)
-    const shownT = state.pinned ?? +snapshots[snapshots.length - 1].t;
-    const outside = shownT < +view.t0 || shownT > +view.t1;
+    // Mid-drag the window is only a preview, so it says nothing yet.
+    const pinnedAt = pinnedIndex();
+    const shownT = +snapshots[pinnedAt ?? snapshots.length - 1].t;
+    const outside = !drag && (shownT < +view.t0 || shownT > +view.t1);
     $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`
       + (outside ? ` · standings at ${fmtTime.format(shownT)}, outside this window` : '');
 
@@ -1061,8 +1053,8 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('x', (d) => x(d)).attr('y', H - margin.bottom + 18)
       .attr('text-anchor', 'middle').text(xFormat);
 
-    if (state.pinned != null && !outside) {
-      const px = x(state.pinned);
+    if (pinnedAt != null && shownT >= +view.t0 && shownT <= +view.t1) {
+      const px = x(shownT);
       g.append('line')
         .attr('x1', px).attr('x2', px).attr('y1', margin.top).attr('y2', H - margin.bottom)
         .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
@@ -1208,6 +1200,7 @@ footer b { color: var(--ink); font-weight: 600; }
       // narrow, never is. A move of the whole window or a fresh selection can
       // be a click in disguise; a resize by a pixel or two is deliberate.
       const fresh = Boolean(selection) && selection[0] === selection[1];
+      drag = null; // a drag whose end went missing is over; runs below are the window's
       drag = {
         start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
         fresh,
@@ -1486,10 +1479,10 @@ footer b { color: var(--ink); font-weight: 600; }
     // new runs again.
     // (In a frozen window already showing the latest run, it would only
     // switch the table to following quietly; Go live does that openly.)
-    $('st-latest').disabled = state.pinned == null || (state.end != null && idx === snapshots.length - 1);
-    // In a live window, unpinning the latest run means following new runs; in
-    // a frozen one it shows the latest run, but the chart stays frozen.
-    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null && state.end == null ? 'Follow new runs' : 'Show latest';
+    $('st-latest').disabled = state.pinned == null || (state.pinned === 'end' && idx === snapshots.length - 1);
+    // Unpinning the latest run means following new runs (the table's; a frozen
+    // chart stays frozen).
+    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null ? 'Follow new runs' : 'Show latest';
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = [state.pool];
@@ -1604,10 +1597,9 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function pin(i) {
-    state.pinned = pinTime(i);
     // In a frozen window, its last run is the window's own pin, however it was
     // reached; any other run is the reader's.
-    state.autoPin = state.end != null && i != null && i === runAsOf(state.end);
+    state.pinned = pinFor(i);
     renderChart();
     renderTable();
     writeUrl();
@@ -1637,11 +1629,11 @@ footer b { color: var(--ink); font-weight: 600; }
       renderAll();
       commit();
     });
-    // Freezing ends the window at the latest run (rounded up to the minute,
-    // as dragged windows are) and, through setWindow, holds the standings
-    // there too; going live lets both follow new runs.
+    // Freezing ends the window at the latest run, exactly where the live window
+    // ended, and through setWindow holds the standings there too; going live
+    // lets both follow new runs.
     $('range-freeze').addEventListener('click', () => {
-      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
+      setWindow(state.duration, state.end == null ? +snapshots[snapshots.length - 1].t : null);
       hideHover();
       renderAll();
       commit();
@@ -1671,7 +1663,7 @@ footer b { color: var(--ink); font-weight: 600; }
         // following new runs in a live one. Already there, there is nothing
         // to do.
         const home = state.end == null ? null : runAsOf(state.end);
-        if (home == null ? state.pinned == null : pinnedIndex() === home) {
+        if (home == null ? state.pinned == null : state.pinned === 'end') {
           hideHover();
           return;
         }
@@ -1809,7 +1801,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     // The saved view keeps no pinned run, but a frozen window holds its
     // standings (see setWindow). A link says for itself, with as_of.
-    if (!linked && state.end != null) holdFrozen();
+    if (!linked && state.end != null) state.pinned = 'end';
     renderAll();
     if (linked) linkView = savedForm();
     writeUrl();
