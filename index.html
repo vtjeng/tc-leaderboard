@@ -518,7 +518,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // pinned is the time (epoch ms) of the run the standings show, or null for
   // the latest run.
   // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
-  // overview window; window then holds its [start, end] in epoch ms.
+  // overview window. window holds a dragged window's [start, end] in epoch
+  // ms, or where a preset has slid to keep a pinned run in view (null while
+  // the preset ends at the latest run).
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
@@ -561,20 +563,25 @@ footer b { color: var(--ink); font-weight: 600; }
     return saved.highlight.length === 0 || state.highlight.size > 0;
   }
 
-  // A link also names a pinned run.
+  // A link also names a pinned run, and where a preset window has slid to.
   function applyLink(linked) {
     const named = applyView(linked);
     state.pinned = pinTime(findRun(linked.run));
     if (state.pinned == null) return named;
-    // The run is the link's point; a window that leaves it out gives way to
-    // the link's preset, or to everything if that leaves it out too.
     const p = pinnedIndex();
-    const outside = () => {
-      const [i0, i1] = runsIn(currentWindow());
-      return p < i0 || p > i1;
-    };
-    if (state.range === 'custom' && outside()) setWindow(hasOwn(RANGE_DAYS, linked.range) ? linked.range : DEFAULTS.range);
-    if (outside()) setWindow('all');
+    const [i0, i1] = runsIn(currentWindow());
+    if (state.range === 'custom' && (p < i0 || p > i1)) {
+      // The run is the link's point; a window that leaves it out gives way.
+      setWindow(hasOwn(RANGE_DAYS, linked.range) ? linked.range : DEFAULTS.range);
+    }
+    // A slid window counts only if it shows the run and ends before the
+    // latest run; otherwise the preset slides to the run itself.
+    const days = RANGE_DAYS[state.range];
+    const t = state.pinned;
+    const span = days * DAY_MS;
+    if (days && linked.start <= t && t <= linked.start + span && linked.start + span < +snapshots[snapshots.length - 1].t) {
+      state.window = [linked.start, linked.start + span];
+    }
     return named;
   }
 
@@ -619,8 +626,11 @@ footer b { color: var(--ink); font-weight: 600; }
   // ones it leaves out; a bare link restores the reader's saved view instead.
   //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run,
   //                                    whichever that is when the link opens)
-  //   range=d7                         chart window as a preset, counting
-  //                                    back from the latest run
+  //   range=d7&start_time=...          chart window as a preset, counting
+  //                                    back from the latest run; with
+  //                                    start_time, slid back to start there
+  //                                    (it slides to keep an older pinned run
+  //                                    in view)
   //   start_time=...&end_time=...      chart window as dragged, snapped to
   //                                    the first and last runs it shows
   //   (times are UTC; one without a zone is read as UTC)
@@ -677,6 +687,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const start = parseUtc(params.get('start_time'));
     const end = parseUtc(params.get('end_time'));
     if (start < end) linked.window = [start, end];
+    else if (!Number.isFinite(end)) linked.start = start; // a slid preset's
     const key = word('sort');
     const dir = word('dir');
     if (key) linked.sort = { key, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(key) };
@@ -732,8 +743,9 @@ footer b { color: var(--ink); font-weight: 600; }
       const [start, end] = linkWindow();
       put('start_time', isoSecond(start));
       put('end_time', isoSecond(end));
-    } else if (state.range !== DEFAULTS.range) {
-      put('range', state.range);
+    } else {
+      if (state.range !== DEFAULTS.range) put('range', state.range);
+      if (state.window) put('start_time', isoSecond(state.window[0])); // whole seconds: see slidePreset
     }
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', state.pool);
@@ -785,6 +797,8 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
+  // state.window is a dragged window, or where a preset window has slid back
+  // to; null for a preset that ends at the latest run.
   function setWindow(range, win = null) {
     state.range = range;
     state.window = win;
@@ -793,11 +807,35 @@ footer b { color: var(--ink); font-weight: 600; }
   function currentWindow() {
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
-    if (state.range === 'custom' && state.window) {
-      return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
-    }
+    if (state.window) return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
     const days = RANGE_DAYS[state.range];
     return [days ? Math.max(first, last - days * DAY_MS) : first, last];
+  }
+
+  // A preset window keeps the pinned run in view, sliding only as far as it
+  // must when the run leaves it, and returns to the latest run when unpinned.
+  // Its edges are whole seconds, as a link gives them, so a link reopens it
+  // exactly.
+  function slidePreset() {
+    const days = RANGE_DAYS[state.range];
+    if (!days) return;
+    if (pinnedIndex() == null) {
+      state.window = null;
+      return;
+    }
+    const t = state.pinned;
+    const [w0, w1] = currentWindow();
+    const span = days * DAY_MS;
+    const SEC = 1000;
+    if (t < w0) {
+      const start = Math.floor(t / SEC) * SEC;
+      state.window = [start, start + span];
+    } else if (t > w1) {
+      const end = Math.ceil(t / SEC) * SEC;
+      state.window = [end - span, end];
+    }
+    // A window reaching the latest run is the preset's own.
+    if (state.window && state.window[1] >= +snapshots[snapshots.length - 1].t) state.window = null;
   }
 
   // The first and last runs a window shows. A window narrower than the gap
@@ -813,6 +851,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function computeView() {
+    slidePreset();
     const metric = METRICS[state.metric];
     const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
@@ -826,6 +865,7 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
+    // Only a dragged window can leave the pinned run out; it drops the pin.
     const p = pinnedIndex();
     if (p == null || p < i0 || p > i1) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
@@ -835,19 +875,25 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    // A dragged window gets a Custom entry while it lasts. It is added and
-    // removed rather than hidden: Safari shows hidden options.
+    // A dragged window, or a preset slid back to a pinned run, gets its own
+    // menu entry while it lasts, so picking a preset returns to the latest
+    // run. It is added and removed rather than hidden: Safari shows hidden
+    // options.
+    const days = RANGE_DAYS[state.range];
+    const label = state.range === 'custom' ? 'Custom'
+      : days && state.window ? `${days} days to ${fmtDay.format(view.t1)}` : null;
     const select = $('range');
-    let custom = $('range-custom');
-    if (state.range === 'custom' && !custom) {
-      custom = new Option('Custom', 'custom');
-      custom.id = 'range-custom';
-      custom.disabled = true;
-      select.add(custom);
-    } else if (state.range !== 'custom' && custom) {
-      custom.remove();
+    let extra = $('range-extra');
+    if (label && !extra) {
+      extra = new Option('', 'extra');
+      extra.id = 'range-extra';
+      extra.disabled = true;
+      select.add(extra);
+    } else if (!label && extra) {
+      extra.remove();
     }
-    select.value = state.range;
+    if (label) extra.textContent = label;
+    select.value = label ? 'extra' : state.range;
   }
 
   function renderLegend() {
@@ -1082,7 +1128,13 @@ footer b { color: var(--ink); font-weight: 600; }
       drag = { pin: state.pinned, start: mode === 'drag' ? [...selection] : null, moved: false };
       return;
     }
-    if (!drag) return;
+    // No drag, or one a keyboard slide ended (see pin): its events are
+    // ignored until the next drag starts.
+    if (!drag || drag.orphan) {
+      // Its steps may already have moved the window.
+      if (type === 'end' && drag) finishDrag();
+      return;
+    }
     // A click on the strip starts a zero-width selection; it is not a window
     // until the drag widens it, and a drag released that narrow clears it.
     const empty = !selection || selection[1] - selection[0] < 1;
@@ -1114,8 +1166,8 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   // The drag is over: it keeps the pin it began with (if the final window
-  // shows it), and everything is redrawn, which also catches up on a resize
-  // and data that arrived during it.
+  // shows it), and everything is redrawn, which also catches up on a resize,
+  // a slide from a pin made mid-drag, and data that arrived during it.
   function finishDrag() {
     hideHover();
     state.pinned = drag.pin;
@@ -1420,6 +1472,17 @@ footer b { color: var(--ink); font-weight: 600; }
     state.pinned = pinTime(i);
     // A pin made mid-drag (arrow keys) is the one the drag ends with.
     if (drag) drag.pin = state.pinned;
+    const win = state.window;
+    computeView();
+    if (state.window !== win) {
+      // The preset window slid; move the overview's window to match rather
+      // than redrawing the strip.
+      renderFilters();
+      // A drag under way would rebuild the window from the brush's old place
+      // on its next step, so it ends here; its release finishes it.
+      if (drag) drag.orphan = true;
+      mini.moveTo(view.t0, view.t1);
+    }
     renderChart();
     renderTable();
     writeUrl();
@@ -1443,6 +1506,11 @@ footer b { color: var(--ink); font-weight: 600; }
     });
     $('range').addEventListener('change', (e) => {
       setWindow(e.target.value);
+      // A picked preset shows its latest window; a pinned run outside that
+      // goes, rather than sliding the window straight back.
+      const [i0] = runsIn(currentWindow());
+      const p = pinnedIndex();
+      if (p != null && p < i0) state.pinned = null;
       hideHover();
       renderAll();
       commit();
@@ -1465,21 +1533,25 @@ footer b { color: var(--ink); font-weight: 600; }
     });
     node.addEventListener('keydown', (e) => {
       if (!view) return;
+      // A preset window follows the pinned run, so the arrow keys can step
+      // past its edges; a dragged window stays put and bounds them.
       const last = snapshots.length - 1;
       const end = view.i0 + view.visible.length - 1;
+      const custom = state.range === 'custom';
+      const [lo, hi] = custom ? [view.i0, end] : [0, last];
       // With nothing pinned the table shows the latest run, which a dragged
       // window may end before: the arrows then step in from its right edge.
-      const at = pinnedIndex() ?? Math.min(last, end + 1);
+      const at = pinnedIndex() ?? (custom ? Math.min(last, end + 1) : last);
       let i;
       if (e.key === 'ArrowLeft') i = at - 1;
       else if (e.key === 'ArrowRight') i = at + 1;
       else if (e.key === 'Home') i = view.i0;
       else if (e.key === 'End') i = end;
-      // Escape returns to the window's last run (the latest, unless the window
-      // was dragged); with nothing pinned there is nothing to return from.
-      else if (e.key === 'Escape') i = state.pinned == null ? null : end;
+      // Escape returns to the latest run, or in a dragged window to its last;
+      // with nothing pinned there is nothing to return from.
+      else if (e.key === 'Escape') i = state.pinned == null ? null : custom ? end : last;
       else return;
-      if (i == null || i < view.i0 || i > end) return;
+      if (i == null || i < lo || i > hi) return;
       e.preventDefault();
       pin(i);
       showHover((pinnedIndex() ?? last) - view.i0);
