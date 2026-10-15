@@ -553,15 +553,18 @@ footer b { color: var(--ink); font-weight: 600; }
     // Own keys only: a stored or linked value could otherwise name an
     // inherited one like toString.
     const first = +snapshots[0].t;
-    if (saved.duration === null || saved.duration > 0) state.duration = saved.duration;
+    if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration > 0)) state.duration = saved.duration;
     // An end before the data would show none of it.
     if (Number.isFinite(saved.end) && saved.end >= first) state.end = saved.end;
     // Saves from before durations: a preset key, or a dragged window.
     if (saved.duration === undefined && hasOwn(DURATIONS, saved.range)) state.duration = DURATIONS[saved.range];
+    const last = +snapshots[snapshots.length - 1].t;
     if (saved.duration === undefined && saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
-        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1] && saved.window[1] >= first) {
+        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
+        && saved.window[1] >= first && saved.window[0] <= last) {
+      // As a dragged window does: live if it reached the latest run.
       state.duration = saved.window[1] - saved.window[0];
-      state.end = saved.window[1];
+      state.end = saved.window[1] >= last ? null : saved.window[1];
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
@@ -870,6 +873,12 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!preset) custom.textContent = `Custom (${fmtDuration(state.duration)})`;
     select.value = preset ?? 'custom';
     const live = state.end == null;
+    // A frozen window is not the 'last' 30 days.
+    for (const opt of select.options) {
+      if (opt === custom) continue;
+      opt.dataset.label ??= opt.textContent;
+      opt.textContent = live ? opt.dataset.label : opt.dataset.label.replace(/^Last /, '');
+    }
     $('range-end').textContent = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
     $('range-freeze').textContent = live ? 'Freeze' : 'Go live';
     $('range-freeze').title = live ? 'Stop the window following new runs: hold it at the latest run'
@@ -937,9 +946,11 @@ footer b { color: var(--ink); font-weight: 600; }
     $('chart-title').textContent = m.title;
     // The standings may show a run outside the window; say so, as there is no
     // marker to draw.
-    const outside = state.pinned != null && (state.pinned < +view.t0 || state.pinned > +view.t1);
+    // (With nothing pinned they show the latest run, after a frozen window.)
+    const shownT = state.pinned ?? +snapshots[snapshots.length - 1].t;
+    const outside = shownT < +view.t0 || shownT > +view.t1;
     $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`
-      + (outside ? ` · standings at ${fmtDay.format(state.pinned)}, outside this window` : '');
+      + (outside ? ` · standings at ${fmtDay.format(shownT)}, outside this window` : '');
 
     const W = Math.max(280, chartEl.clientWidth);
     const H = Math.round(Math.max(260, Math.min(440, W * 0.46)));
@@ -1144,11 +1155,11 @@ footer b { color: var(--ink); font-weight: 600; }
       drag.moved = true;
       mini.decorate(selection);
       const [t0, t1] = selection.map((px) => +mini.x.invert(px));
+      drag.raw = [t0, t1];
       setWindow(t1 - t0, t1);
       hideHover();
       computeView();
-      renderFilters();
-      renderChart();
+      renderChart(); // the menu and end status catch up on release
       return;
     }
     // A click outside the window (a fresh selection that never really moved)
@@ -1567,7 +1578,10 @@ footer b { color: var(--ink); font-weight: 600; }
       if (!drag?.byMouse) return;
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
-      if (drag) finishDrag();
+      if (drag) {
+        if (drag.raw) setDraggedWindow(...drag.raw);
+        finishDrag();
+      }
     };
     // d3 sees a pen as a mouse, too.
     const mouseLike = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
