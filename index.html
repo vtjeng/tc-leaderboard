@@ -607,8 +607,8 @@ footer b { color: var(--ink); font-weight: 600; }
   // the data.
   function pinnedIndex() {
     if (state.pinned == null) return null;
-    // Mid-drag, the window's last run is the previewed window's.
-    if (state.pinned === 'end') return runAsOf(drag?.preview ? drag.preview[1] : state.end);
+    // (Mid-drag it stays the settled window's, as the table does.)
+    if (state.pinned === 'end') return state.end == null ? null : runAsOf(state.end);
     const i = byTime.left(snapshots, state.pinned);
     return i < snapshots.length && +snapshots[i].t === state.pinned ? i : null;
   }
@@ -868,12 +868,13 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // The first and last runs a window shows. A window narrower than the gap
   // between two runs still shows two: the last run at or before its end and
-  // the one before, so a frozen window never takes in a later run.
+  // the one before (just the first run, if it ends before the second), so a
+  // frozen window never takes in a later run.
   function runsIn([w0, w1]) {
     let i0 = byTime.left(snapshots, w0);
     let i1 = byTime.right(snapshots, w1) - 1;
     if (i1 - i0 < 1) {
-      i1 = Math.min(snapshots.length - 1, Math.max(i1, 1)); // (one run, if that is all)
+      i1 = Math.max(i1, 0);
       i0 = Math.max(0, i1 - 1);
     }
     return [i0, i1];
@@ -1200,13 +1201,14 @@ footer b { color: var(--ink); font-weight: 600; }
       // narrow, never is. A move of the whole window or a fresh selection can
       // be a click in disguise; a resize by a pixel or two is deliberate.
       const fresh = Boolean(selection) && selection[0] === selection[1];
-      drag = null; // a drag whose end went missing is over; runs below are the window's
+      drag = null; // a drag whose end went missing is over
+      const runs = runsIn(currentWindow()); // the runs the window showed before
       drag = {
         start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
         fresh,
         moved: false,
         byMouse: sourceEvent.type.startsWith('mouse'),
-        runs: runsIn(currentWindow()), // the runs the window showed before
+        runs,
       };
       return;
     }
@@ -1482,7 +1484,7 @@ footer b { color: var(--ink); font-weight: 600; }
     $('st-latest').disabled = state.pinned == null || (state.pinned === 'end' && idx === snapshots.length - 1);
     // Unpinning the latest run means following new runs (the table's; a frozen
     // chart stays frozen).
-    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null ? 'Follow new runs' : 'Show latest';
+    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null && state.pinned !== 'end' ? 'Follow new runs' : 'Show latest';
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = [state.pool];
