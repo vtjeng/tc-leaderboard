@@ -1267,7 +1267,8 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // On release, or when the release went missing.
   function endDrag() {
-    if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
+    const changed = settleDrag();
+    if (!changed && !pendingSnapshots && !redrawAfterDrag) {
       const { moved } = drag;
       drag = null;
       if (moved) {
@@ -1283,7 +1284,7 @@ footer b { color: var(--ink); font-weight: 600; }
       else writeUrl();
       return;
     }
-    finishDrag();
+    finishDrag(changed);
   }
 
   // How a drag ends, on release or when its release went missing: a collapsed
@@ -1306,18 +1307,23 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // The drag is over: everything is redrawn, which also catches up on a
   // resize and data that arrived during it.
-  function finishDrag() {
+  function finishDrag(changed = true) {
     hideHover();
     drag = null;
+    const wanted = changed || commitAfterDrag;
     commitAfterDrag = false; // commit() below covers it
     redrawAfterDrag = false;
+    let dropped = false;
     if (pendingSnapshots) {
-      setSnapshots(pendingSnapshots);
+      dropped = setSnapshots(pendingSnapshots);
       pendingSnapshots = null;
       renderLatestRun();
     }
     renderAll();
-    commit();
+    // A press that changed nothing saves only a team the new data dropped,
+    // as a refresh does.
+    if (wanted || dropped) commit();
+    else writeUrl(); // (the pinned run may have left the data)
   }
 
   function nearestIndex(px) {
