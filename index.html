@@ -533,7 +533,7 @@ footer b { color: var(--ink); font-weight: 600; }
   const isKnownTeam = (team) => knownTeams.has(team);
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
-  let mini = null;      // scale and brush from the last overview render
+  let mini = null;      // the overview's elements and current scale, once drawn
   // pinned is the time (epoch ms) of the run the standings show, or null for
   // the latest run.
   // The chart window is duration ms long (null: all history) and ends at end
@@ -1015,7 +1015,6 @@ footer b { color: var(--ink); font-weight: 600; }
   // two time axes line up.
   // The overview's elements (groups, brush, grips) are built once and then
   // only updated, so a redraw never replaces the brush under a drag.
-  let miniParts = null;
   function buildMini() {
     const g = miniSvg.append('g');
     const parts = {
@@ -1041,7 +1040,9 @@ footer b { color: var(--ink); font-weight: 600; }
     parts.grips = parts.brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
     parts.grips.append('rect').attr('x', -4).attr('width', 8).attr('rx', 3);
     parts.grips.selectAll('line').data([-1.5, 1.5]).join('line').attr('x1', (d) => d).attr('x2', (d) => d);
-    parts.decorate = (sel) => decorate(sel);
+    parts.decorate = decorate;
+    // A programmatic move has no sourceEvent, so onBrush ignores it.
+    parts.moveTo = (t0, t1) => parts.brushG.call(parts.brush.move, [parts.x(t0), parts.x(t1)]);
     function decorate(sel) {
       const { W, margin, top, bottom } = parts.dims;
       const [a, b] = sel ?? [margin.left, margin.left];
@@ -1054,15 +1055,15 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function renderMini() {
-    miniParts ??= buildMini();
-    const { axis, ticks, context, focus, shade, brush, brushG, grips } = miniParts;
+    mini ??= buildMini();
+    const { axis, ticks, context, focus, shade, brush, brushG, grips } = mini;
     const m = view.metric;
     const W = Math.max(280, miniEl.clientWidth);
     const H = 64;
     const margin = { top: 4, right: 14, bottom: 18, left: 52 };
     const top = margin.top;
     const bottom = H - margin.bottom;
-    miniParts.dims = { W, margin, top, bottom };
+    mini.dims = { W, margin, top, bottom };
     miniSvg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
 
     const series = new Map();
@@ -1097,9 +1098,8 @@ footer b { color: var(--ink); font-weight: 600; }
     grips.select('rect').attr('y', -gripH / 2).attr('height', gripH);
     grips.selectAll('line').attr('y1', -gripH / 4).attr('y2', gripH / 4);
 
-    // A programmatic move has no sourceEvent, so onBrush ignores it. A drag
-    // under way owns the selection; its end redraws.
-    mini = { x, moveTo: (t0, t1) => brushG.call(brush.move, [x(t0), x(t1)]), decorate: miniParts.decorate };
+    // A drag under way owns the selection; its end redraws.
+    mini.x = x;
     if (!drag) mini.moveTo(view.t0, view.t1);
   }
 
@@ -1116,7 +1116,8 @@ footer b { color: var(--ink); font-weight: 600; }
       // A press on the strip outside the window starts a fresh selection. A
       // move of the whole window or a fresh selection can be a click in
       // disguise; a resize by a pixel or two is deliberate.
-      const fresh = Boolean(sourceEvent.target?.classList?.contains('overlay'));
+      // (d3 also starts one for a Cmd-press inside the window.)
+      const fresh = Boolean(sourceEvent.metaKey || sourceEvent.target?.classList?.contains('overlay'));
       drag = {
         start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
         fresh,
@@ -1557,15 +1558,18 @@ footer b { color: var(--ink); font-weight: 600; }
     // A mouse drag's end can go missing (a release outside the frame). One
     // still open after the mouse is released, or while it moves with no
     // button held, is finished here; touch gestures are left to the brush.
-    const abandon = () => setTimeout(() => {
+    const abandon = () => {
       if (!drag?.byMouse) return;
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
       if (drag) finishDrag();
-    });
+    };
     // d3 sees a pen as a mouse, too.
     const mouseLike = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
-    window.addEventListener('pointerup', (e) => { if (mouseLike(e)) abandon(); });
+    // After a release, give the brush's own mouseup its turn first.
+    window.addEventListener('pointerup', (e) => { if (mouseLike(e)) setTimeout(abandon); });
+    // A move with no button held comes before its mouse event, which would
+    // drag the window to wherever the mouse came back; end the drag first.
     window.addEventListener('pointermove', (e) => { if (drag?.byMouse && mouseLike(e) && e.buttons === 0) abandon(); });
     let raf = 0;
     new ResizeObserver(() => {
@@ -1604,6 +1608,9 @@ footer b { color: var(--ink); font-weight: 600; }
     snapshots = next;
     knownTeams = new Set();
     next.forEach((s) => s.byTeam.forEach((_, team) => knownTeams.add(team)));
+    // A highlighted team that has left the data would hold a colour and
+    // draw nothing.
+    state.highlight.forEach((_, team) => { if (!knownTeams.has(team)) state.highlight.delete(team); });
   }
 
   function renderLatestRun() {
