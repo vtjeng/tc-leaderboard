@@ -515,6 +515,8 @@ footer b { color: var(--ink); font-weight: 600; }
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // scale and brush from the last overview render
+  // pinned is the time (epoch ms) of the run the standings show, or null for
+  // the latest run.
   // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
   // overview window. window holds a dragged window's [start, end] in epoch
   // ms, or where a preset has slid to keep a pinned run in view (null while
@@ -564,26 +566,35 @@ footer b { color: var(--ink); font-weight: 600; }
   // A link also names a pinned run, and where a preset window has slid to.
   function applyLink(linked) {
     const named = applyView(linked);
-    state.pinned = normalisePin(findRun(linked.run));
+    state.pinned = pinTime(findRun(linked.run));
     if (state.pinned == null) return named;
+    const p = pinnedIndex();
     const [i0, i1] = runsIn(currentWindow());
-    if (state.range === 'custom' && (state.pinned < i0 || state.pinned > i1)) {
+    if (state.range === 'custom' && (p < i0 || p > i1)) {
       // The run is the link's point; a window that leaves it out gives way.
-      setWindow(linked.range ?? DEFAULTS.range); // readUrl keeps only a valid preset
+      setWindow(hasOwn(RANGE_DAYS, linked.range) ? linked.range : DEFAULTS.range);
     }
     // A slid window counts only if it shows the run and ends before the
     // latest run; otherwise the preset slides to the run itself.
     const days = RANGE_DAYS[state.range];
-    const t = +snapshots[state.pinned].t;
+    const t = state.pinned;
     const span = days * DAY_MS;
-    if (days && linked.from <= t && t <= linked.from + span && linked.from + span < +snapshots[snapshots.length - 1].t) {
-      state.window = [linked.from, linked.from + span];
+    if (days && linked.start <= t && t <= linked.start + span && linked.start + span < +snapshots[snapshots.length - 1].t) {
+      state.window = [linked.start, linked.start + span];
     }
     return named;
   }
 
-  // Pinning the latest run is the same as pinning nothing.
-  const normalisePin = (i) => (i == null || i < 0 || i >= snapshots.length - 1 ? null : i);
+  // state.pinned is the pinned run's time, so it names the same run however
+  // the list of runs changes. Pinning the latest run is pinning nothing.
+  const pinTime = (i) => (i == null || i < 0 || i >= snapshots.length - 1 ? null : +snapshots[i].t);
+  // The pinned run's index, or null when nothing (or the latest run) is pinned
+  // or the run has left the data.
+  function pinnedIndex() {
+    if (state.pinned == null) return null;
+    const i = byTime.left(snapshots, state.pinned);
+    return i < snapshots.length - 1 && +snapshots[i].t === state.pinned ? i : null;
+  }
 
   function loadSaved() {
     try {
@@ -615,11 +626,12 @@ footer b { color: var(--ink); font-weight: 600; }
   // ones it leaves out; a bare link restores the reader's saved view instead.
   //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run,
   //                                    whichever that is when the link opens)
-  //   range=d7&from=...                chart window as a preset, counting
-  //                                    back from the latest run; with from,
-  //                                    slid back to start there (it slides
-  //                                    to keep an older pinned run in view)
-  //   from=...&to=...                  chart window as dragged, snapped to
+  //   range=d7&start_time=...          chart window as a preset, counting
+  //                                    back from the latest run; with
+  //                                    start_time, slid back to start there
+  //                                    (it slides to keep an older pinned run
+  //                                    in view)
+  //   start_time=...&end_time=...      chart window as dragged, snapped to
   //                                    the first and last runs it shows
   //   (times are UTC; one without a zone is read as UTC)
   //   teams=vtjeng,,davidbau           highlighted teams by colour slot; an
@@ -631,6 +643,10 @@ footer b { color: var(--ink); font-weight: 600; }
   // show the teams and colours it was copied with. So the address bar is bare
   // only until the first render.
   // Opening a link does not overwrite the saved view; the next change does.
+  // The names are chosen not to clash with parameters that other services
+  // add to a shared link (utm_source, fbclid, from=...); those are kept as
+  // they are, and a value of ours that makes no sense falls back to its
+  // default.
   const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
   // UTC. A typed '+' offset arrives as a space, and a space may separate the
@@ -659,47 +675,23 @@ footer b { color: var(--ink); font-weight: 600; }
   const escapeTeam = (team) => team.replace(/[%,]/g, (c) => (c === '%' ? '%25' : '%2C'));
   const unescapeTeam = (s) => s.replace(/%25|%2C/gi, (m) => (m === '%25' ? '%' : ','));
 
-  // Names like from and sort are common in other people's links too
-  // (from=newsletter), so a parameter is the view's only if its value parses.
-  const isTime = (v) => Number.isFinite(parseUtc(v));
+  const URL_KEYS = ['run', 'range', 'start_time', 'end_time', 'teams', 'metric', 'pool', 'sort', 'dir'];
   const isKnownTeam = (team) => knownTeams.has(team);
-  // Parameters that only qualify another (dir, to, a preset's from) do not
-  // claim the URL on their own.
-  const VALID = {
-    run: (v) => findRun(parseUtc(v)) >= 0,
-    // A from with a later to is a dragged window; with no time for to (a
-    // reversed pair is neither), a slid preset's, which needs its run.
-    from: (v, p) => isTime(v) && (isTime(p.get('to')) ? parseUtc(v) < parseUtc(p.get('to')) : isOwn(p, 'run')),
-    to: (v, p) => parseUtc(p.get('from')) < parseUtc(v),
-    range: (v) => hasOwn(RANGE_DAYS, v.toLowerCase()),
-    metric: (v) => hasOwn(METRICS, v.toLowerCase()),
-    pool: (v) => hasOwn(POOL_TEXT, v.toLowerCase()),
-    sort: (v) => parseSortKey(v.toLowerCase()) != null,
-    dir: (v, p) => /^(asc|desc)$/i.test(v) && isOwn(p, 'sort'),
-    // Empty is the view's (no teams); otherwise it must name a team.
-    teams: (v) => v === '' || v.split(',').some((t) => isKnownTeam(unescapeTeam(t))),
-  };
-  const URL_KEYS = Object.keys(VALID);
-  const isOwn = (params, k) => params.has(k) && VALID[k](params.get(k), params);
 
   function readUrl() {
     const params = new URLSearchParams(location.search);
-    if (!URL_KEYS.some((k) => isOwn(params, k))) return null;
-    const get = (k) => (isOwn(params, k) ? params.get(k) : undefined);
+    if (!URL_KEYS.some((k) => params.has(k))) return null;
     // Every keyword value is lower case; accept a hand-typed range=D7.
-    const word = (k) => get(k)?.toLowerCase();
-    const linked = { metric: word('metric'), pool: word('pool'), range: word('range'), run: parseUtc(get('run')) };
-    const from = parseUtc(get('from'));
-    const to = parseUtc(get('to'));
-    if (from < to) {
-      linked.window = [from, to];
-    } else if (!isTime(params.get('to'))) {
-      linked.from = from;
-    }
+    const word = (k) => params.get(k)?.toLowerCase();
+    const linked = { metric: word('metric'), pool: word('pool'), range: word('range'), run: parseUtc(params.get('run')) };
+    const start = parseUtc(params.get('start_time'));
+    const end = parseUtc(params.get('end_time'));
+    if (start < end) linked.window = [start, end];
+    else if (!Number.isFinite(end)) linked.start = start; // a slid preset's
     const key = word('sort');
     const dir = word('dir');
     if (key) linked.sort = { key, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(key) };
-    if (isOwn(params, 'teams')) {
+    if (params.has('teams')) {
       const seen = new Set();
       linked.highlight = [];
       params.get('teams').split(',').forEach((s, i) => {
@@ -743,27 +735,17 @@ footer b { color: var(--ink); font-weight: 600; }
   const linkWindow = () => [Math.floor(+view.t0 / 1000) * 1000, Math.ceil(+view.t1 / 1000) * 1000];
 
   function flushUrl() {
-    // Parameters that are not the view's (utm_source and the like) stay.
     if (!view) return;
-    const params = new URLSearchParams(location.search);
-    // The view's parameters now in the address bar, to replace. A run= in the
-    // page's own format stays the page's after its run leaves the data.
-    const drop = new Set(URL_KEYS.filter((k) => isOwn(params, k)));
-    if (isTime(params.get('run'))) {
-      drop.add('run');
-      // So does the from of a slid window beside it.
-      if (isTime(params.get('from')) && !isTime(params.get('to'))) drop.add('from');
-    }
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
-    if (state.pinned != null) put('run', isoSecond(+snapshots[state.pinned].t));
+    if (state.pinned != null) put('run', isoSecond(state.pinned));
     if (state.range === 'custom' && state.window) {
-      const [from, to] = linkWindow();
-      put('from', isoSecond(from));
-      put('to', isoSecond(to));
+      const [start, end] = linkWindow();
+      put('start_time', isoSecond(start));
+      put('end_time', isoSecond(end));
     } else {
       if (state.range !== DEFAULTS.range) put('range', state.range);
-      if (state.window) put('from', isoSecond(state.window[0])); // whole seconds: see slidePreset
+      if (state.window) put('start_time', isoSecond(state.window[0])); // whole seconds: see slidePreset
     }
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', state.pool);
@@ -782,12 +764,7 @@ footer b { color: var(--ink); font-weight: 600; }
     };
     const enc = (v) => encodeURIComponent(v).replace(/%2C/g, ',').replace(/%3A/g, ':');
     const written = [...ours].map(([k, v]) => `${k}=${enc(v)}`);
-    let kept = location.search.slice(1).split('&').filter((part) => part && !drop.has(keyOf(part)) && !ours.has(keyOf(part)));
-    // A foreign dir, to or from that the parameters written here would make
-    // meaningful (dir next to our sort) is dropped rather than misread.
-    const next = new URLSearchParams([...kept, ...written].join('&'));
-    const misread = ['dir', 'to', 'from'].filter((k) => !ours.has(k) && isOwn(next, k));
-    kept = kept.filter((part) => !misread.includes(keyOf(part)));
+    const kept = location.search.slice(1).split('&').filter((part) => part && !URL_KEYS.includes(keyOf(part)));
     const query = [...kept, ...written].join('&');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
@@ -842,11 +819,11 @@ footer b { color: var(--ink); font-weight: 600; }
   function slidePreset() {
     const days = RANGE_DAYS[state.range];
     if (!days) return;
-    if (state.pinned == null) {
+    if (pinnedIndex() == null) {
       state.window = null;
       return;
     }
-    const t = +snapshots[state.pinned].t;
+    const t = state.pinned;
     const [w0, w1] = currentWindow();
     const span = days * DAY_MS;
     const SEC = 1000;
@@ -889,7 +866,8 @@ footer b { color: var(--ink); font-weight: 600; }
       }));
     });
     // Only a dragged window can leave the pinned run out; it drops the pin.
-    if (state.pinned != null && (state.pinned < i0 || state.pinned > i1)) state.pinned = null;
+    const p = pinnedIndex();
+    if (p == null || p < i0 || p > i1) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -1011,7 +989,7 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('text-anchor', 'middle').text(xFormat);
 
     if (state.pinned != null) {
-      const px = x(snapshots[state.pinned].t);
+      const px = x(state.pinned);
       g.append('line')
         .attr('x1', px).attr('x2', px).attr('y1', margin.top).attr('y2', H - margin.bottom)
         .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
@@ -1051,14 +1029,51 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // The overview strip shares the main chart's left and right margins, so the
   // two time axes line up.
+  // The overview's elements (groups, brush, grips) are built once and then
+  // only updated, so a redraw never replaces the brush under a drag.
+  let miniParts = null;
+  function buildMini() {
+    const g = miniSvg.append('g');
+    const parts = {
+      axis: g.append('line').style('stroke', 'var(--axis)'),
+      ticks: g.append('g'),
+      context: g.append('g'),
+      focus: g.append('g'),
+      shade: g.append('g').selectAll('rect').data(['left', 'right']).join('rect').attr('class', 'shade'),
+      dims: null,
+    };
+    parts.brush = d3.brushX()
+      .handleSize(14)
+      .on('start brush end', (e) => { decorate(e.selection); onBrush(e); });
+    parts.brushG = g.append('g').attr('class', 'brush').call(parts.brush);
+    // Grips on both edges (resize); the window itself shows a grab cursor
+    // (move). The grips sit on top of d3's own handles and ignore the pointer,
+    // so dragging still goes to the brush underneath.
+    parts.grips = parts.brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
+    parts.grips.append('rect').attr('x', -4).attr('width', 8).attr('rx', 3);
+    parts.grips.selectAll('line').data([-1.5, 1.5]).join('line').attr('x1', (d) => d).attr('x2', (d) => d);
+    function decorate(sel) {
+      const { W, margin, top, bottom } = parts.dims;
+      const [a, b] = sel ?? [margin.left, margin.left];
+      parts.shade.attr('x', (d) => (d === 'left' ? margin.left : b))
+        .attr('width', (d) => Math.max(0, d === 'left' ? a - margin.left : W - margin.right - b));
+      parts.grips.style('display', sel ? null : 'none')
+        .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
+    }
+    return parts;
+  }
+
   function renderMini() {
+    miniParts ??= buildMini();
+    const { axis, ticks, context, focus, shade, brush, brushG, grips } = miniParts;
     const m = view.metric;
     const W = Math.max(280, miniEl.clientWidth);
     const H = 64;
     const margin = { top: 4, right: 14, bottom: 18, left: 52 };
+    const top = margin.top;
+    const bottom = H - margin.bottom;
+    miniParts.dims = { W, margin, top, bottom };
     miniSvg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
-    miniSvg.selectAll('*').remove();
-    if (drag) drag.orphan = true; // the brush being dragged is gone
 
     const series = new Map();
     snapshots.forEach((s, i) => s.byTeam.forEach((r, team) => {
@@ -1069,57 +1084,35 @@ footer b { color: var(--ink); font-weight: 600; }
     let hi = 0;
     series.forEach((pts) => pts.forEach(({ v }) => { if (v != null && v > hi) hi = v; }));
     const x = d3.scaleTime().domain([snapshots[0].t, snapshots[snapshots.length - 1].t]).range([margin.left, W - margin.right]);
-    const y = d3.scaleLinear().domain(m.domain ?? [0, hi || 1]).range([H - margin.bottom, margin.top]);
+    const y = d3.scaleLinear().domain(m.domain ?? [0, hi || 1]).range([bottom, top]);
     const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v)).curve(d3.curveStepAfter);
 
-    const g = miniSvg.append('g');
-    g.append('line')
-      .attr('x1', margin.left).attr('x2', W - margin.right)
-      .attr('y1', H - margin.bottom + 0.5).attr('y2', H - margin.bottom + 0.5)
-      .style('stroke', 'var(--axis)');
+    axis.attr('x1', margin.left).attr('x2', W - margin.right).attr('y1', bottom + 0.5).attr('y2', bottom + 0.5);
     const [xInterval, xFormat] = timeTicks(x.domain()[1] - x.domain()[0], W - margin.left - margin.right);
-    g.append('g').selectAll('text').data(x.ticks(xInterval)).join('text')
+    ticks.selectAll('text').data(x.ticks(xInterval)).join('text')
       .attr('x', (d) => x(d)).attr('y', H - 4).attr('text-anchor', 'middle').text(xFormat);
     const all = [...series];
-    g.append('g').selectAll('path').data(all.filter(([team]) => !state.highlight.has(team))).join('path')
+    context.selectAll('path').data(all.filter(([team]) => !state.highlight.has(team))).join('path')
       .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
       .style('stroke', 'var(--context)').attr('stroke-width', 1);
-    g.append('g').selectAll('path').data(all.filter(([team]) => state.highlight.has(team))).join('path')
+    focus.selectAll('path').data(all.filter(([team]) => state.highlight.has(team))).join('path')
       .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
       .style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`).attr('stroke-width', 1.25);
 
     // Dim the history outside the window so the window reads as a lens.
-    const top = margin.top;
-    const bottom = H - margin.bottom;
-    const shade = g.append('g').selectAll('rect').data(['left', 'right']).join('rect')
-      .attr('class', 'shade').attr('y', top).attr('height', bottom - top);
-
-    const brush = d3.brushX()
-      .extent([[margin.left, top], [W - margin.right, bottom]])
-      .handleSize(14)
-      .on('start brush end', (e) => { decorate(e.selection); onBrush(e); });
-    const brushG = g.append('g').attr('class', 'brush').call(brush);
-
-    // Grips on both edges (resize); the window itself shows a grab cursor
-    // (move). The grips sit on top of d3's own handles and ignore the pointer,
-    // so dragging still goes to the brush underneath.
+    shade.attr('y', top).attr('height', bottom - top);
+    brush.extent([[margin.left, top], [W - margin.right, bottom]]);
+    brushG.call(brush);
     const gripH = Math.min(26, bottom - top - 6);
-    const grips = brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
-    grips.append('rect').attr('x', -4).attr('y', -gripH / 2).attr('width', 8).attr('height', gripH).attr('rx', 3);
-    grips.selectAll('line').data([-1.5, 1.5]).join('line')
-      .attr('x1', (d) => d).attr('x2', (d) => d).attr('y1', -gripH / 4).attr('y2', gripH / 4);
+    grips.select('rect').attr('y', -gripH / 2).attr('height', gripH);
+    grips.selectAll('line').attr('y1', -gripH / 4).attr('y2', gripH / 4);
 
-    function decorate(sel) {
-      const [a, b] = sel ?? [margin.left, margin.left];
-      shade.attr('x', (d) => (d === 'left' ? margin.left : b))
-        .attr('width', (d) => Math.max(0, d === 'left' ? a - margin.left : W - margin.right - b));
-      grips.style('display', sel ? null : 'none')
-        .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
-    }
-    // A programmatic move has no sourceEvent, so onBrush ignores it.
+    // A programmatic move has no sourceEvent, so onBrush ignores it. A drag
+    // under way owns the selection; its end redraws.
     mini = { x, moveTo: (t0, t1) => brushG.call(brush.move, [x(t0), x(t1)]) };
-    mini.moveTo(view.t0, view.t1);
+    if (!drag) mini.moveTo(view.t0, view.t1);
   }
+
 
   // A drag on the overview: the pin and selection it began with, and whether
   // the window has moved. The pin is judged against the window the drag ends
@@ -1135,8 +1128,8 @@ footer b { color: var(--ink); font-weight: 600; }
       drag = { pin: state.pinned, start: mode === 'drag' ? [...selection] : null, moved: false };
       return;
     }
-    // No drag, or one on a brush renderMini has since replaced: its events
-    // are ignored until the next drag starts.
+    // No drag, or one a keyboard slide ended (see pin): its events are
+    // ignored until the next drag starts.
     if (!drag || drag.orphan) {
       // Its steps may already have moved the window.
       if (type === 'end' && drag) finishDrag();
@@ -1180,7 +1173,7 @@ footer b { color: var(--ink); font-weight: 600; }
     state.pinned = drag.pin;
     drag = null;
     if (pendingSnapshots) {
-      applySnapshots(pendingSnapshots);
+      setSnapshots(pendingSnapshots);
       pendingSnapshots = null;
       renderLatestRun();
     }
@@ -1358,7 +1351,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function renderTable() {
-    const idx = state.pinned ?? snapshots.length - 1;
+    const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     $('st-time').textContent = fmtTime.format(snap.t);
     $('st-latest').disabled = state.pinned == null;
@@ -1476,7 +1469,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function pin(i) {
-    state.pinned = normalisePin(i);
+    state.pinned = pinTime(i);
     // A pin made mid-drag (arrow keys) is the one the drag ends with.
     if (drag) drag.pin = state.pinned;
     const win = state.window;
@@ -1516,7 +1509,8 @@ footer b { color: var(--ink); font-weight: 600; }
       // A picked preset shows its latest window; a pinned run outside that
       // goes, rather than sliding the window straight back.
       const [i0] = runsIn(currentWindow());
-      if (state.pinned != null && state.pinned < i0) state.pinned = null;
+      const p = pinnedIndex();
+      if (p != null && p < i0) state.pinned = null;
       hideHover();
       renderAll();
       commit();
@@ -1535,7 +1529,7 @@ footer b { color: var(--ink); font-weight: 600; }
     node.addEventListener('click', (e) => {
       if (!chart) return;
       pin(view.i0 + nearestIndex(d3.pointer(e, node)[0]));
-      showHover((state.pinned ?? snapshots.length - 1) - view.i0);
+      showHover((pinnedIndex() ?? snapshots.length - 1) - view.i0);
     });
     node.addEventListener('keydown', (e) => {
       if (!view) return;
@@ -1547,7 +1541,7 @@ footer b { color: var(--ink); font-weight: 600; }
       const [lo, hi] = custom ? [view.i0, end] : [0, last];
       // With nothing pinned the table shows the latest run, which a dragged
       // window may end before: the arrows then step in from its right edge.
-      const at = state.pinned ?? (custom ? Math.min(last, end + 1) : last);
+      const at = pinnedIndex() ?? (custom ? Math.min(last, end + 1) : last);
       let i;
       if (e.key === 'ArrowLeft') i = at - 1;
       else if (e.key === 'ArrowRight') i = at + 1;
@@ -1560,7 +1554,7 @@ footer b { color: var(--ink); font-weight: 600; }
       if (i == null || i < lo || i > hi) return;
       e.preventDefault();
       pin(i);
-      showHover((state.pinned ?? last) - view.i0);
+      showHover((pinnedIndex() ?? last) - view.i0);
     });
     node.addEventListener('blur', hideHover);
     // The brush's end can go missing (a release outside the frame, an
@@ -1616,13 +1610,6 @@ footer b { color: var(--ink); font-weight: 600; }
     $('latest-run').textContent = `${fmtTime.format(latestT)} (${age})`;
   }
 
-  // pinned is an index; find the same run in the new list.
-  function applySnapshots(next) {
-    const pinnedT = state.pinned == null ? null : +snapshots[state.pinned].t;
-    setSnapshots(next);
-    if (pinnedT != null) state.pinned = normalisePin(findRun(pinnedT));
-  }
-
   async function refresh() {
     try {
       const next = await loadSnapshots();
@@ -1631,7 +1618,7 @@ footer b { color: var(--ink); font-weight: 600; }
           // Redrawing the overview would cut a drag short; it waits for the end.
           pendingSnapshots = next;
         } else {
-          applySnapshots(next);
+          setSnapshots(next);
           hideHover();
           renderAll();
           writeUrl();
