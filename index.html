@@ -151,7 +151,6 @@ body.loading .opts, body.loading .range-row, body.load-failed .opts, body.load-f
 body.loading .controls { cursor: progress; }
 .seg-range { margin-left: auto; }
 .range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.range-end { font-size: var(--step--1); color: var(--ink-2); white-space: nowrap; }
 .sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
 .select-wrap::after {
@@ -206,6 +205,7 @@ body.loading .controls { cursor: progress; }
   background: var(--bg); color: var(--ink); font: inherit;
 }
 .range-pop input[aria-invalid="true"] { border-color: var(--bad); }
+.range-status { margin: 0.2rem 0.5rem 0.35rem; font-size: var(--step--2); color: var(--ink-2); }
 .range-hint { max-width: 14rem; margin: 0.15rem 0.5rem 0.2rem; font-size: var(--step--2); color: var(--muted); white-space: normal; }
 .range-pop:has(input[aria-invalid="true"]) .range-hint { color: var(--bad); }
 
@@ -398,19 +398,19 @@ footer b { color: var(--ink); font-weight: 600; }
         <label class="seg-label" for="range">Range</label>
         <div class="range-row">
           <span class="select-wrap">
-            <button type="button" class="range-btn" id="range" aria-haspopup="true" aria-expanded="false" aria-controls="range-pop" disabled>Last 30 days</button>
+            <button type="button" class="range-btn" id="range" aria-haspopup="true" aria-expanded="false" aria-controls="range-pop" aria-describedby="range-end" disabled>Last 30 days</button>
             <fieldset class="range-pop" id="range-pop" hidden>
               <legend class="sr-only">Range</legend>
+              <p class="range-status" id="range-end"></p>
               <label><input type="radio" name="range" value="all"><span data-label="All">All</span></label>
               <label><input type="radio" name="range" value="d90"><span data-label="Last 90 days">Last 90 days</span></label>
               <label><input type="radio" name="range" value="d30"><span data-label="Last 30 days">Last 30 days</span></label>
               <label><input type="radio" name="range" value="d7"><span data-label="Last 7 days">Last 7 days</span></label>
               <label><input type="radio" name="range" value="custom" id="range-custom-pick"><span>Custom</span>
                 <input type="text" id="range-custom" placeholder="3d 4h" aria-label="Custom range" aria-describedby="range-hint" autocomplete="off" spellcheck="false"></label>
-              <p class="range-hint" id="range-hint">Days, hours and minutes, such as 3d 4h, 36h or 90m; Enter applies it.</p>
+              <p class="range-hint" id="range-hint">Days, hours and minutes, such as 3d 4h, 36h or 90m.</p>
             </fieldset>
           </span>
-          <span class="range-end" id="range-end"></span>
         </div>
       </div>
     </div>
@@ -984,13 +984,10 @@ footer b { color: var(--ink); font-weight: 600; }
     // A frozen window is not the 'last' 30 days.
     const label = preset ? checked.nextElementSibling.textContent : `Custom (${fmtDuration(state.duration)})`;
     $('range').textContent = live ? label : label.replace(/^Last /, '');
-    // A live region: rewriting unchanged text would be announced again. (Mid-
-    // drag view is the preview's; the end catches up on release.)
-    const endText = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
-    if (!drag && $('range-end').textContent !== endText) $('range-end').textContent = endText;
-    // A live region only once it has a window to describe, so the first text
-    // is not announced as a change.
-    $('range-end').setAttribute('aria-live', 'polite');
+    // Where the window ends, in the menu (and the button's description), so
+    // the row does not reflow as it changes. (Mid-drag view is the
+    // preview's; the end catches up on release.)
+    if (!drag) $('range-end').textContent = live ? 'Live: follows new runs' : `Ends ${fmtTime.format(view.t1)}`;
   }
 
   function renderLegend() {
