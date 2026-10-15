@@ -192,6 +192,9 @@ body.loading .controls { cursor: progress; }
   box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.35);
 }
 .range-pop[hidden] { display: none; }
+.range-group { margin: 0; padding: 0; border: 0; min-width: 0; }
+.range-group + .range-group { margin-top: 0.5rem; }
+.range-legend { padding: 0.3rem 0.5rem 0.15rem; font: 500 var(--step--2)/1 var(--font-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .range-pop label {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.35rem 0.5rem; border-radius: 5px;
@@ -199,13 +202,13 @@ body.loading .controls { cursor: progress; }
 }
 .range-pop label:hover { background: var(--wash); }
 .range-pop input[type="radio"] { margin: 0; accent-color: var(--ink); }
-.range-pop input[type="text"] {
+.range-pop input[type="text"], .range-pop input[type="datetime-local"] {
   width: 7.5rem; padding: 0.2rem 0.4rem;
   border: 1px solid var(--hairline); border-radius: 5px;
   background: var(--bg); color: var(--ink); font: inherit;
 }
+.range-pop input[type="datetime-local"] { width: auto; color-scheme: inherit; }
 .range-pop input[aria-invalid="true"] { border-color: var(--bad); }
-.range-status { margin: 0.2rem 0.5rem 0.35rem; font-size: var(--step--2); color: var(--ink-2); }
 .range-hint { max-width: 14rem; margin: 0.15rem 0.5rem 0.2rem; font-size: var(--step--2); color: var(--muted); white-space: normal; }
 .range-pop:has(input[aria-invalid="true"]) .range-hint { color: var(--bad); }
 
@@ -399,17 +402,25 @@ footer b { color: var(--ink); font-weight: 600; }
         <div class="range-row">
           <span class="select-wrap">
             <button type="button" class="range-btn" id="range" aria-haspopup="true" aria-expanded="false" aria-controls="range-pop" aria-describedby="range-end" disabled>Last 30 days</button>
-            <fieldset class="range-pop" id="range-pop" hidden>
-              <legend class="sr-only">Range</legend>
-              <p class="range-status" id="range-end"></p>
-              <label><input type="radio" name="range" value="all"><span data-label="All">All</span></label>
-              <label><input type="radio" name="range" value="d90"><span data-label="Last 90 days">Last 90 days</span></label>
-              <label><input type="radio" name="range" value="d30"><span data-label="Last 30 days">Last 30 days</span></label>
-              <label><input type="radio" name="range" value="d7"><span data-label="Last 7 days">Last 7 days</span></label>
-              <label><input type="radio" name="range" value="custom" id="range-custom-pick"><span>Custom</span>
-                <input type="text" id="range-custom" placeholder="3d 4h" aria-label="Custom range" aria-describedby="range-hint" autocomplete="off" spellcheck="false"></label>
-              <p class="range-hint" id="range-hint">Days, hours and minutes, such as 3d 4h, 36h or 90m.</p>
-            </fieldset>
+            <span class="sr-only" id="range-end"></span>
+            <div class="range-pop" id="range-pop" hidden>
+              <fieldset class="range-group">
+                <legend class="range-legend">Duration</legend>
+                <label><input type="radio" name="range" value="all"><span>All</span></label>
+                <label><input type="radio" name="range" value="d90"><span>90 days</span></label>
+                <label><input type="radio" name="range" value="d30"><span>30 days</span></label>
+                <label><input type="radio" name="range" value="d7"><span>7 days</span></label>
+                <label><input type="radio" name="range" value="custom" id="range-custom-pick"><span>Custom</span>
+                  <input type="text" id="range-custom" placeholder="3d 4h" aria-label="Custom duration" aria-describedby="range-hint" autocomplete="off" spellcheck="false"></label>
+                <p class="range-hint" id="range-hint">Days, hours and minutes, such as 3d 4h, 36h or 90m.</p>
+              </fieldset>
+              <fieldset class="range-group">
+                <legend class="range-legend">Ending at</legend>
+                <label><input type="radio" name="range-end" value="live"><span>The latest run, following new ones</span></label>
+                <label><input type="radio" name="range-end" value="fixed" id="range-end-pick"><span>Fixed</span>
+                  <input type="datetime-local" id="range-end-at" step="60" aria-label="Window end"></label>
+              </fieldset>
+            </div>
           </span>
         </div>
       </div>
@@ -430,7 +441,7 @@ footer b { color: var(--ink); font-weight: 600; }
       <li>Hover or tap the chart to read values.</li>
       <li>Click or tap a point in time to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
       <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
-      <li>A window that reaches the latest run is live and follows new runs; drag it back and it stays where you leave it. The presets are always live.</li>
+      <li>A window that reaches the latest run is live and follows new runs; drag it back, or fix its end in the range menu, and it stays where you leave it.</li>
       <li>The standings show the window's last run; a run you pick stays until you pick the last run again or press Escape.</li>
     </ul>
   </section>
@@ -523,6 +534,12 @@ footer b { color: var(--ink); font-weight: 600; }
     const parts = [[Math.floor(m / 1440), 'd'], [Math.floor(m / 60) % 24, 'h'], [m % 60, 'm']].filter(([n]) => n);
     return parts.map(([n, u]) => n + u).join(' ') || '0m';
   }
+  // A time as a datetime-local input's value: the reader's own clock, to the
+  // minute.
+  const localMinute = (ms) => {
+    const d = new Date(ms);
+    return new Date(ms - d.getTimezoneOffset() * MINUTE_MS).toISOString().slice(0, 16);
+  };
   // A duration as typed or linked: '3d4h13m', '3d 4h', '36h', or 'all' (null:
   // all history). undefined is not a duration, or one outside a minute to ten
   // years.
@@ -968,25 +985,30 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    // The range menu checks the window's duration: a preset, or Custom with
-    // the duration filled in (a dragged, typed or linked one).
+    // The range menu: the window's duration (a preset, or Custom with a
+    // dragged, typed or linked one filled in), and where it ends.
     const preset = Object.keys(DURATIONS).find((k) => DURATIONS[k] === state.duration);
     const live = state.end == null;
     document.querySelectorAll('#range-pop input[name="range"]').forEach((el) => {
       el.checked = el.value === (preset ?? 'custom');
     });
-    // (Not while the reader types in it.)
+    document.querySelectorAll('#range-pop input[name="range-end"]').forEach((el) => {
+      el.checked = el.value === (live ? 'live' : 'fixed');
+    });
+    // (Not while the reader types in them.)
     if (document.activeElement !== $('range-custom')) {
       $('range-custom').value = preset ? '' : fmtDuration(state.duration);
       $('range-custom').removeAttribute('aria-invalid');
     }
-    const checked = document.querySelector('#range-pop input[name="range"]:checked');
-    // A frozen window is not the 'last' 30 days.
-    const label = preset ? checked.nextElementSibling.textContent : `Custom (${fmtDuration(state.duration)})`;
-    $('range').textContent = live ? label : label.replace(/^Last /, '');
-    // Where the window ends, in the menu (and the button's description), so
-    // the row does not reflow as it changes. (Mid-drag view is the
-    // preview's; the end catches up on release.)
+    const endAt = $('range-end-at');
+    endAt.min = localMinute(+snapshots[0].t);
+    endAt.max = localMinute(ceilMinute(+snapshots[snapshots.length - 1].t));
+    if (document.activeElement !== endAt && !drag) endAt.value = localMinute(state.end ?? +snapshots[snapshots.length - 1].t);
+    // The button names the duration only, so its width holds still; 'Last'
+    // when the window follows new runs.
+    const length = preset ? document.querySelector('#range-pop input[name="range"]:checked + span').textContent : fmtDuration(state.duration);
+    $('range').textContent = live && state.duration != null ? `Last ${length}` : length;
+    // (Mid-drag view is the preview's; the end catches up on release.)
     if (!drag) $('range-end').textContent = live ? 'Live: follows new runs' : `Ends ${fmtTime.format(view.t1)}`;
   }
 
@@ -1651,15 +1673,16 @@ footer b { color: var(--ink); font-weight: 600; }
     document.querySelectorAll('.opts input, #range').forEach((el) => { el.disabled = !on; });
   }
 
-  // The range menu: a button that opens radio buttons for the presets and a
-  // custom duration. A choice applies at once (the arrow keys step through
-  // them with the menu open); a click on a preset, or Enter, closes it. The
-  // presets are the last N days, so live; a custom duration keeps the end.
+  // The range menu: a button that opens two groups of radio buttons, the
+  // window's duration and where it ends. Each applies at once and leaves the
+  // other as it is; the menu stays open until Escape, Enter in a box, or a
+  // click elsewhere.
   function wireRange() {
     const btn = $('range');
     const pop = $('range-pop');
     const text = $('range-custom');
-    const choose = (duration, end = state.end) => {
+    const endAt = $('range-end-at');
+    const choose = (duration, end) => {
       setWindow(duration, end);
       hideHover();
       renderAll();
@@ -1684,7 +1707,15 @@ footer b { color: var(--ink); font-weight: 600; }
         if (report && text.value.trim()) text.setAttribute('aria-invalid', 'true');
         return false;
       }
-      choose(ms);
+      choose(ms, state.end);
+      return true;
+    };
+    // A typed end, kept to the data: no earlier than the second run, as a
+    // window shows two runs.
+    const applyEnd = () => {
+      const ms = new Date(endAt.value).getTime(); // (a datetime-local value reads as local time)
+      if (!Number.isFinite(ms)) return false;
+      choose(state.duration, Math.max(ms, +snapshots[Math.min(1, snapshots.length - 1)].t));
       return true;
     };
     btn.addEventListener('click', () => open(pop.hidden));
@@ -1698,25 +1729,23 @@ footer b { color: var(--ink); font-weight: 600; }
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
-      } else if (e.key === 'Enter' && e.target.name === 'range') {
+      } else if (e.key === 'Enter' && e.target.type === 'radio') {
         e.preventDefault();
-        if (e.target.value === 'custom') text.focus();
+        if (e.target === $('range-custom-pick')) text.focus();
+        else if (e.target === $('range-end-pick')) endAt.focus();
         else close();
       }
     });
     pop.querySelectorAll('input[name="range"]').forEach((el) => {
-      el.addEventListener('change', () => (el.value === 'custom' ? applyText(false) : choose(DURATIONS[el.value], null)));
+      el.addEventListener('change', () => (el.value === 'custom' ? applyText(false) : choose(DURATIONS[el.value], state.end)));
     });
-    pop.querySelectorAll('label').forEach((label) => {
-      label.addEventListener('click', (e) => {
-        if (e.detail === 0 || e.target === text) return; // an arrow key or Space, or the box itself
-        if (label.contains(text)) return text.focus();
-        // The checked preset of a frozen window lets it follow new runs again.
-        const radio = label.querySelector('input');
-        if (radio.checked && state.end != null) choose(DURATIONS[radio.value], null);
-        open(false);
-      });
+    pop.querySelectorAll('input[name="range-end"]').forEach((el) => {
+      // Fixing a live window holds it at the latest run, to the minute.
+      el.addEventListener('change', () => choose(state.duration, el.value === 'live' ? null : ceilMinute(+snapshots[snapshots.length - 1].t)));
     });
+    // A click on Custom or Fixed moves on to its box.
+    $('range-custom-pick').closest('label').addEventListener('click', (e) => { if (e.detail && e.target !== text) text.focus(); });
+    $('range-end-pick').closest('label').addEventListener('click', (e) => { if (e.detail && e.target !== endAt) endAt.focus(); });
     text.addEventListener('input', () => {
       $('range-custom-pick').checked = true;
       text.removeAttribute('aria-invalid');
@@ -1727,6 +1756,13 @@ footer b { color: var(--ink); font-weight: 600; }
       if (applyText(true)) close();
     });
     text.addEventListener('change', () => applyText(true));
+    endAt.addEventListener('change', applyEnd);
+    endAt.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      applyEnd();
+      close();
+    });
   }
 
   function wire() {
