@@ -147,9 +147,10 @@ h1 {
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
 /* Dimmed until the data loads, or if it fails to. */
-body.loading .opts, body.loading .select-wrap, body.load-failed .opts, body.load-failed .select-wrap { opacity: 0.55; pointer-events: none; }
+body.loading .opts, body.loading .range-row, body.load-failed .opts, body.load-failed .range-row { opacity: 0.55; pointer-events: none; }
 body.loading .controls { cursor: progress; }
 .seg-range { margin-left: auto; }
+.range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
 .select-wrap::after {
@@ -164,8 +165,9 @@ body.loading .controls { cursor: progress; }
   transform: translateY(-70%) rotate(45deg);
   pointer-events: none;
 }
-.select-wrap select {
+.select-wrap .range-btn {
   appearance: none;
+  text-align: left;
   min-width: 9.5rem;
   padding: 0.45rem 2.2rem 0.45rem 0.75rem;
   border: 1px solid var(--hairline);
@@ -177,12 +179,41 @@ body.loading .controls { cursor: progress; }
   line-height: 1.5;
   cursor: pointer;
 }
-/* The open list is painted from the select's background colour, which must
-   stay opaque: a translucent hover colour showed it light in dark mode until
-   the pointer left the select. The hover wash goes on top as an image. */
-.select-wrap select:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
-.select-wrap option { background: var(--surface); color: var(--ink); }
-.select-wrap select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.select-wrap .range-btn:hover:not(:disabled) { background-image: linear-gradient(var(--wash), var(--wash)); }
+.select-wrap .range-btn:disabled { cursor: default; }
+.select-wrap .range-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+/* The range menu: presets and a custom duration, as radio buttons. */
+.range-pop {
+  position: absolute; z-index: 6; top: calc(100% + 4px); left: 0;
+  width: max-content; min-width: 100%; max-width: calc(100vw - 32px);
+  margin: 0; padding: 0.35rem;
+  border: 1px solid var(--hairline); border-radius: 8px;
+  background: var(--surface); color: var(--ink);
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.35);
+}
+.range-pop[hidden] { display: none; }
+.range-group { margin: 0; padding: 0; border: 0; min-width: 0; }
+.range-group + .range-group { margin-top: 0.5rem; }
+.range-legend { padding: 0.3rem 0.5rem 0.15rem; font: 500 var(--step--2)/1 var(--font-data); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.range-pop label {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.35rem 0.5rem; border-radius: 5px;
+  font-size: var(--step--1); cursor: pointer; white-space: nowrap;
+}
+.range-pop label:hover { background: var(--wash); }
+.range-pop input[type="radio"] { margin: 0; accent-color: var(--ink); }
+.range-pop input[type="text"], .range-pop input[type="datetime-local"] {
+  width: 7.5rem; padding: 0.2rem 0.4rem;
+  border: 1px solid var(--hairline); border-radius: 5px;
+  background: var(--bg); color: var(--ink); font: inherit;
+}
+.range-pop input[type="datetime-local"] { width: auto; color-scheme: inherit; }
+/* WebKit draws a date input's fields itself, in its own font. */
+.range-pop input[type="datetime-local"]::-webkit-datetime-edit,
+.range-pop input[type="datetime-local"]::-webkit-datetime-edit-fields-wrapper { font-family: var(--font-body); font-size: inherit; }
+.range-pop input[aria-invalid="true"] { border-color: var(--bad); }
+.range-hint { max-width: 14rem; margin: 0.15rem 0.5rem 0.2rem; font-size: var(--step--2); color: var(--muted); white-space: normal; }
+.range-pop:has(input[aria-invalid="true"]) .range-hint { color: var(--bad); }
 
 .card {
   background: var(--surface);
@@ -221,7 +252,7 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
   cursor: pointer;
 }
 .chip:hover { background: var(--wash); }
-.chip:focus-visible, .key:focus-visible, .btn:focus-visible, svg:focus-visible {
+.chip:focus-visible, .key:focus-visible, svg:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
@@ -267,18 +298,6 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 
 .standings { display: grid; gap: 0.6rem; min-width: 0; }
 .st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline; justify-content: space-between; }
-.btn {
-  padding: 0.3rem 0.75rem;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  font-size: var(--step--1);
-  cursor: pointer;
-}
-.btn:hover:not(:disabled) { background: var(--wash); }
-.btn:disabled { color: var(--muted); cursor: default; }
 .table-scroll { overflow-x: auto; min-width: 0; }
 table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
 th, td { padding: 0.45rem 0.5rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--hairline); }
@@ -383,14 +402,30 @@ footer b { color: var(--ink); font-weight: 600; }
       </div>
       <div class="seg seg-range">
         <label class="seg-label" for="range">Range</label>
-        <span class="select-wrap">
-          <select id="range" disabled>
-            <option value="all">All</option>
-            <option value="d90">Last 90 days</option>
-            <option value="d30">Last 30 days</option>
-            <option value="d7">Last 7 days</option>
-          </select>
-        </span>
+        <div class="range-row">
+          <span class="select-wrap">
+            <button type="button" class="range-btn" id="range" aria-haspopup="true" aria-expanded="false" aria-controls="range-pop" aria-describedby="range-end" disabled>Last 30 days</button>
+            <span class="sr-only" id="range-end"></span>
+            <div class="range-pop" id="range-pop" hidden>
+              <fieldset class="range-group">
+                <legend class="range-legend">Duration</legend>
+                <label><input type="radio" name="range" value="all"><span>All</span></label>
+                <label><input type="radio" name="range" value="d90"><span>90 days</span></label>
+                <label><input type="radio" name="range" value="d30"><span>30 days</span></label>
+                <label><input type="radio" name="range" value="d7"><span>7 days</span></label>
+                <label><input type="radio" name="range" value="custom" id="range-custom-pick"><span>Custom</span>
+                  <input type="text" id="range-custom" placeholder="3d 4h" aria-label="Custom duration" aria-describedby="range-hint" autocomplete="off" spellcheck="false"></label>
+                <p class="range-hint" id="range-hint">Days, hours and minutes, such as 3d 4h, 36h or 90m.</p>
+              </fieldset>
+              <fieldset class="range-group">
+                <legend class="range-legend">Ending at</legend>
+                <label><input type="radio" name="range-end" value="live"><span>Now</span></label>
+                <label><input type="radio" name="range-end" value="fixed" id="range-end-pick"><span>Fixed</span>
+                  <input type="datetime-local" id="range-end-at" step="60" aria-label="Window end"></label>
+              </fieldset>
+            </div>
+          </span>
+        </div>
       </div>
     </div>
     <div class="card-head">
@@ -409,13 +444,14 @@ footer b { color: var(--ink); font-weight: 600; }
       <li>Hover or tap the chart to read values.</li>
       <li>Click or tap a point in time to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
       <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
+      <li>A window that reaches the latest run is live and follows new runs; drag it back, or fix its end in the range menu, and it stays where you leave it.</li>
+      <li>The standings show the window's last run; a run you pick stays until you pick the last run again or press Escape.</li>
     </ul>
   </section>
 
   <section class="standings" aria-labelledby="st-title">
     <div class="st-head">
       <h2 id="st-title">Standings at <span id="st-time">&hellip;</span></h2>
-      <button type="button" class="btn" id="st-latest" disabled>Show latest</button>
     </div>
     <p class="sub" id="st-sub">Click a column header to sort; select a row to highlight that team in the chart.</p>
     <div class="table-scroll">
@@ -489,8 +525,35 @@ footer b { color: var(--ink); font-weight: 600; }
     permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
   };
   const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
-  const RANGE_DAYS = { all: null, d90: 90, d30: 30, d7: 7 };
-  const DEFAULT_RANGE = 'd30';
+  // The range menu's presets, as window durations (null: all history).
+  const DURATIONS = { all: null, d90: 90 * DAY_MS, d30: 30 * DAY_MS, d7: 7 * DAY_MS };
+  const DEFAULT_DURATION = DURATIONS.d30;
+  const MINUTE_MS = 60000;
+  const floorMinute = (ms) => Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+  const ceilMinute = (ms) => Math.ceil(ms / MINUTE_MS) * MINUTE_MS;
+  // '3d 4h 13m', leaving out zero parts.
+  function fmtDuration(ms) {
+    const m = Math.round(ms / MINUTE_MS);
+    const parts = [[Math.floor(m / 1440), 'd'], [Math.floor(m / 60) % 24, 'h'], [m % 60, 'm']].filter(([n]) => n);
+    return parts.map(([n, u]) => n + u).join(' ') || '0m';
+  }
+  // A time as a datetime-local input's value: the reader's own clock, to the
+  // minute.
+  const localMinute = (ms) => {
+    const d = new Date(ms);
+    return new Date(ms - d.getTimezoneOffset() * MINUTE_MS).toISOString().slice(0, 16);
+  };
+  // A duration as typed or linked: '3d4h13m', '3d 4h', '36h', or 'all' (null:
+  // all history). undefined is not a duration, or one outside a minute to ten
+  // years.
+  function parseDuration(v) {
+    const s = String(v ?? '').toLowerCase().replace(/\s+/g, '');
+    if (s === 'all') return null;
+    const m = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?$/.exec(s);
+    if (!m || !(m[1] || m[2] || m[3])) return undefined;
+    const ms = ((+(m[1] ?? 0) * 24 + +(m[2] ?? 0)) * 60 + +(m[3] ?? 0)) * MINUTE_MS;
+    return ms >= MINUTE_MS && ms <= 3650 * DAY_MS ? ms : undefined;
+  }
 
   // "PRNG match" stays capitalised; "Points" becomes "points" mid-sentence.
   const inSentence = (title) => (/^[A-Z]{2}/.test(title) ? title : title[0].toLowerCase() + title.slice(1));
@@ -521,13 +584,15 @@ footer b { color: var(--ink); font-weight: 600; }
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // the overview's elements and current scale, once drawn
-  // pinned is the time (epoch ms) of the run the standings show, or null for
-  // the latest run.
-  // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
-  // overview window; window then holds its [start, end] in epoch ms.
+  // pinned is the run the standings show (see pinnedIndex): a run's time
+  // (epoch ms), 'end' for a frozen window's last run, or null to follow new
+  // runs.
+  // The chart window is duration ms long (null: all history) and ends at end
+  // (epoch ms), or at the latest run when end is null, so it follows new runs.
+  // The pinned run need not be inside it.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
-  const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null, sort: { key: 'points-combined', dir: 'desc' } };
+  const state = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null, sort: { key: 'points-combined', dir: 'desc' } };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -537,13 +602,25 @@ footer b { color: var(--ink); font-weight: 600; }
   function applyView(saved) {
     // Own keys only: a stored value could otherwise name an inherited one
     // like toString.
-    if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
-    // A window outside the data is ignored.
-    if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
+    const first = +snapshots[0].t;
+    const last = +snapshots[snapshots.length - 1].t;
+    if (saved.duration !== undefined || saved.end !== undefined) {
+      if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) {
+        state.duration = saved.duration;
+      }
+      // An end before the second run (or the data) is moved to it, as a
+      // window shows two runs. One after the latest
+      // run (saved against newer data, or the data is behind) is kept as it
+      // is: the window shows up to the latest run, and runs up to its end are
+      // the window's when they arrive.
+      if (Number.isFinite(saved.end)) state.end = Math.max(saved.end, +snapshots[Math.min(1, snapshots.length - 1)].t);
+    } else if (hasOwn(DURATIONS, saved.range)) {
+      // Saves from before durations: a preset key, or a dragged window.
+      state.duration = DURATIONS[saved.range];
+    } else if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
         && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
-        && saved.window[1] >= +snapshots[0].t && saved.window[0] <= +snapshots[snapshots.length - 1].t) {
-      state.range = 'custom';
-      state.window = [...saved.window];
+        && saved.window[1] >= first && saved.window[0] <= last) {
+      setDraggedWindow(...saved.window); // snapped, and live if it reached the latest run
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
@@ -566,15 +643,30 @@ footer b { color: var(--ink); font-weight: 600; }
     return saved.highlight.length === 0 || state.highlight.size > 0;
   }
 
-  // state.pinned is the pinned run's time, so it names the same run however
-  // the list of runs changes. Pinning the latest run is pinning nothing.
-  const pinTime = (i) => (i == null || i < 0 || i >= snapshots.length - 1 ? null : +snapshots[i].t);
-  // The pinned run's index, or null when nothing (or the latest run) is pinned
-  // or the run has left the data.
+  // state.pinned is what the standings show: null follows the latest run (a
+  // live window's resting place); 'end' holds a frozen window's last run,
+  // wherever the window is; a run's time holds that run (even the latest),
+  // however the list of runs changes.
+  // A run the reader picks, as a pin: the window's last run is where the page
+  // rests (following new runs, or 'end'); any other run is held.
+  const pinFor = (i) => {
+    if (i == null || i < 0) return null;
+    if (state.end == null) return i === snapshots.length - 1 ? null : +snapshots[i].t;
+    return i === runAsOf(state.end) ? 'end' : +snapshots[i].t;
+  };
+  // The last run at or before a time (the earliest, if before them all; -1
+  // for no time).
+  function runAsOf(ms) {
+    return Number.isFinite(ms) ? Math.max(0, byTime.right(snapshots, ms) - 1) : -1;
+  }
+  // The pinned run's index, or null when nothing is pinned or the run has left
+  // the data.
   function pinnedIndex() {
     if (state.pinned == null) return null;
+    // (Mid-drag it stays the settled window's, as the table does.)
+    if (state.pinned === 'end') return state.end == null ? null : runAsOf(state.end);
     const i = byTime.left(snapshots, state.pinned);
-    return i < snapshots.length - 1 && +snapshots[i].t === state.pinned ? i : null;
+    return i < snapshots.length && +snapshots[i].t === state.pinned ? i : null;
   }
 
   function loadSaved() {
@@ -590,7 +682,12 @@ footer b { color: var(--ink); font-weight: 600; }
     // Before the data loads there is no view to save; saving the empty state
     // would replace the reader's saved teams. Mid-drag the window is not
     // settled; finishing the drag commits.
-    if (!view || drag) return;
+    if (!view) return;
+    if (drag) {
+      commitAfterDrag = true;
+      return;
+    }
+    commitAfterDrag = false;
     save();
   }
   // The view as saved. A tab saves only a view that differs from the one it
@@ -598,7 +695,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // data) never overwrites a newer view saved in another tab.
   let lastForm = null;
   const savedForm = () => JSON.stringify({
-    v: STORE_VERSION, range: state.range, window: state.range === 'custom' ? state.window : null, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
+    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
   });
   function save() {
     const form = savedForm();
@@ -624,31 +721,77 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
-  function setWindow(range, win = null) {
-    state.range = range;
-    state.window = win;
+  // A frozen window holds its standings too (pinned 'end'), unless the reader
+  // has pinned a run; going live, it follows new runs again. A pin the reader
+  // set elsewhere is never touched here.
+  function setWindow(duration, end = null) {
+    state.duration = duration;
+    state.end = end;
+    if (end == null) {
+      if (state.pinned === 'end') state.pinned = null;
+      return;
+    }
+    if (state.pinned == null) state.pinned = 'end';
+    // A pin already on the window's last run is the window's, too.
+    else if (typeof state.pinned === 'number') state.pinned = pinFor(pinnedIndex());
   }
 
   function currentWindow() {
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
-    if (state.range === 'custom' && state.window) {
-      return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
+    // Mid-drag the chart previews the dragged window; state changes on release.
+    if (drag?.preview) return [Math.max(first, drag.preview[0]), Math.min(last, drag.preview[1])];
+    // The start counts back from the stored end, so a frozen window does not
+    // shift when newer runs arrive; both are then kept to the data.
+    const end = state.end ?? last;
+    const start = state.duration == null ? first : Math.max(first, end - state.duration);
+    return [Math.min(start, last), Math.max(first, Math.min(last, end))];
+  }
+
+  // The first and last runs a window shows. A window narrower than the gap
+  // between two runs still shows two: the last run at or before its end and
+  // the one before, so a frozen window never takes in a later run. (Stored
+  // ends are never before the second run.)
+  function runsIn([w0, w1]) {
+    let i0 = byTime.left(snapshots, w0);
+    let i1 = byTime.right(snapshots, w1) - 1;
+    if (i1 - i0 < 1) {
+      i1 = Math.min(snapshots.length - 1, Math.max(i1, 1)); // (one run, if that is all)
+      i0 = Math.max(0, i1 - 1);
     }
-    const days = RANGE_DAYS[state.range];
-    return [days ? Math.max(first, last - days * DAY_MS) : first, last];
+    return [i0, i1];
+  }
+
+  // A dragged window, as stored: snapped outward to whole minutes around the
+  // runs it shows (runs are hours apart, so it reopens on the same runs), and
+  // live when it reaches the latest run, unless it was frozen.
+  // A frozen window stays frozen when dragged (live = false).
+  function setDraggedWindow(t0, t1, live = true) {
+    const [i0, i1] = runsIn([t0, t1]);
+    const last = snapshots.length - 1;
+    // A frozen window whose last run is unchanged keeps its end.
+    const end = !live && state.end != null && runAsOf(state.end) === i1 ? state.end
+      : Math.max(ceilMinute(+snapshots[i1].t), floorMinute(+snapshots[i0].t) + MINUTE_MS);
+    const start = Math.min(floorMinute(+snapshots[i0].t), end - MINUTE_MS);
+    const follow = live && i1 === last;
+    // Every run is all history, which keeps them all as new ones arrive.
+    if (i0 === 0 && i1 === last) return setWindow(null, follow ? null : end);
+    setWindow(end - start, follow ? null : end);
+  }
+
+  // A moved window: the same duration, ending at its last run i1 (to the
+  // minute), or live when that is the latest run and it was live. A frozen
+  // window whose last run is unchanged keeps its end.
+  function moveWindow(i1, live) {
+    i1 = Math.max(i1, Math.min(1, snapshots.length - 1)); // (ends are never before the second run)
+    if (live && i1 === snapshots.length - 1) return setWindow(state.duration, null);
+    const keep = state.end != null && runAsOf(state.end) === i1;
+    setWindow(state.duration, keep ? state.end : ceilMinute(+snapshots[i1].t));
   }
 
   function computeView() {
     const metric = METRICS[state.metric];
-    const [w0, w1] = currentWindow();
-    let i0 = byTime.left(snapshots, w0);
-    let i1 = byTime.right(snapshots, w1) - 1;
-    // A window narrower than the gap between two runs still shows two runs.
-    if (i1 - i0 < 1) {
-      i0 = Math.max(0, Math.min(i0, snapshots.length - 2));
-      i1 = i0 + 1;
-    }
+    const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
     const teams = new Set();
     visible.forEach((s) => s.byTeam.forEach((_, team) => teams.add(team)));
@@ -660,8 +803,9 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    const p = pinnedIndex();
-    if (p == null || p < i0 || p > i1) state.pinned = null;
+    // A run of the reader's that has left the data is unpinned: the page
+    // rests on the window's last run again.
+    if (pinnedIndex() == null) state.pinned = state.end == null ? null : 'end';
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -669,19 +813,31 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    // A dragged window gets a Custom entry while it lasts. It is added and
-    // removed rather than hidden: Safari shows hidden options.
-    const select = $('range');
-    let custom = $('range-custom');
-    if (state.range === 'custom' && !custom) {
-      custom = new Option('Custom', 'custom');
-      custom.id = 'range-custom';
-      custom.disabled = true;
-      select.add(custom);
-    } else if (state.range !== 'custom' && custom) {
-      custom.remove();
+    // The range menu: the window's duration (a preset, or Custom with a
+    // dragged, typed or linked one filled in), and where it ends.
+    const preset = Object.keys(DURATIONS).find((k) => DURATIONS[k] === state.duration);
+    const live = state.end == null;
+    document.querySelectorAll('#range-pop input[name="range"]').forEach((el) => {
+      el.checked = el.value === (preset ?? 'custom');
+    });
+    document.querySelectorAll('#range-pop input[name="range-end"]').forEach((el) => {
+      el.checked = el.value === (live ? 'live' : 'fixed');
+    });
+    // (Not while the reader types in them.)
+    if (document.activeElement !== $('range-custom')) {
+      $('range-custom').value = preset ? '' : fmtDuration(state.duration);
+      $('range-custom').removeAttribute('aria-invalid');
     }
-    select.value = state.range;
+    const endAt = $('range-end-at');
+    endAt.min = localMinute(+snapshots[0].t);
+    endAt.max = localMinute(ceilMinute(+snapshots[snapshots.length - 1].t));
+    if (document.activeElement !== endAt && !drag) endAt.value = localMinute(state.end ?? +snapshots[snapshots.length - 1].t);
+    // The button names the duration only, so its width holds still; 'Last'
+    // when the window follows new runs.
+    const length = preset ? document.querySelector('#range-pop input[name="range"]:checked + span').textContent : fmtDuration(state.duration);
+    $('range').textContent = live && state.duration != null ? `Last ${length}` : length;
+    // (Mid-drag view is the preview's; the end catches up on release.)
+    if (!drag) $('range-end').textContent = live ? 'Live: follows new runs' : `Ends ${fmtTime.format(view.t1)}`;
   }
 
   function renderLegend() {
@@ -743,7 +899,15 @@ footer b { color: var(--ink); font-weight: 600; }
   function renderChart() {
     const m = view.metric;
     $('chart-title').textContent = m.title;
-    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`;
+    // The standings may show a run outside the window; say so, as there is no
+    // marker to draw.
+    // (With nothing pinned they show the latest run, after a frozen window.)
+    // Mid-drag the window is only a preview, so it says nothing yet.
+    const pinnedAt = pinnedIndex();
+    const shownT = +snapshots[pinnedAt ?? snapshots.length - 1].t;
+    const outside = !drag && (shownT < +view.t0 || shownT > +view.t1);
+    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`
+      + (outside ? ` · standings at ${fmtTime.format(shownT)}, outside this window` : '');
 
     const W = Math.max(280, chartEl.clientWidth);
     const H = Math.round(Math.max(260, Math.min(440, W * 0.46)));
@@ -776,8 +940,8 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('x', (d) => x(d)).attr('y', H - margin.bottom + 18)
       .attr('text-anchor', 'middle').text(xFormat);
 
-    if (state.pinned != null) {
-      const px = x(state.pinned);
+    if (pinnedAt != null && shownT >= +view.t0 && shownT <= +view.t1) {
+      const px = x(shownT);
       g.append('line')
         .attr('x1', px).attr('x2', px).attr('y1', margin.top).attr('y2', H - margin.bottom)
         .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
@@ -794,11 +958,13 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('class', 'line').attr('d', ([, pts]) => gapPath(line, pts))
       .attr('fill', 'none').style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`)
       .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
-    const ends = focus.map(([team, pts]) => {
-      const lastPt = [...pts].reverse().find((p) => p.v != null);
-      return lastPt ? { team, p: lastPt } : null;
-    }).filter(Boolean);
-    g.append('g').selectAll('circle').data(ends).join('circle')
+    // Each highlighted line is marked at the run the standings show, when it
+    // is in the window and the team has a value there.
+    const marks = shownT >= +view.t0 && shownT <= +view.t1 ? focus.map(([team, pts]) => {
+      const p = pts.find((q) => +q.t === shownT);
+      return p?.v != null ? { team, p } : null;
+    }).filter(Boolean) : [];
+    g.append('g').selectAll('circle').data(marks).join('circle')
       .attr('cx', (d) => x(d.p.t)).attr('cy', (d) => y(d.p.v)).attr('r', 4)
       .style('fill', (d) => `var(--s${state.highlight.get(d.team)})`)
       .style('stroke', 'var(--surface)').attr('stroke-width', 2);
@@ -914,6 +1080,7 @@ footer b { color: var(--ink); font-weight: 600; }
   const CLICK_SLOP_PX = 3;
   let pendingSnapshots = null; // data that arrived during a drag
   let redrawAfterDrag = false; // a resize happened during a drag
+  let commitAfterDrag = false; // a change made during a drag, saved at its end
   function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
@@ -922,11 +1089,15 @@ footer b { color: var(--ink); font-weight: 600; }
       // narrow, never is. A move of the whole window or a fresh selection can
       // be a click in disguise; a resize by a pixel or two is deliberate.
       const fresh = Boolean(selection) && selection[0] === selection[1];
+      drag = null; // a drag whose end went missing is over
+      const runs = runsIn(currentWindow()); // the runs the window showed before
       drag = {
         start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
+        mode,
         fresh,
         moved: false,
         byMouse: sourceEvent.type.startsWith('mouse'),
+        runs,
       };
       return;
     }
@@ -934,7 +1105,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // A fresh selection is not a window until the drag widens it, and one
     // released that narrow clears the window. (A window drawn narrower than a
     // pixel, around a run or two, can still be grabbed and moved.)
-    const empty = !selection || (drag.fresh && selection[1] - selection[0] < 1);
+    const empty = !selection || selection[0] === selection[1] || (drag.fresh && selection[1] - selection[0] < 1);
     if (type === 'brush') {
       // Nor is a click's (or a finger tap's) jitter of a few pixels.
       const jitter = !drag.moved && drag.start
@@ -942,34 +1113,70 @@ footer b { color: var(--ink); font-weight: 600; }
       if (empty || jitter) {
         // A drag shrunk back to nothing shows its lens collapsing; release
         // clears the window.
-        if (empty && drag.moved) mini.decorate(selection);
+        if (empty && drag.moved && !drag.collapsed) {
+          drag.collapsed = true;
+          drag.preview = [-Infinity, state.end ?? Infinity]; // all history
+          mini.decorate(selection);
+          hideHover();
+          computeView();
+          renderChart();
+        }
         return;
       }
       drag.moved = true;
+      drag.mode = mode; // (Space can turn a resize into a move)
+      drag.collapsed = false;
+      drag.preview = selection.map((px) => +mini.x.invert(px));
       mini.decorate(selection);
-      setWindow('custom', selection.map((px) => +mini.x.invert(px)));
-      const shown = state.pinned;
       hideHover();
       computeView();
       renderChart(); // the menu and end status catch up on release
-      if (state.pinned !== shown) {
-        // The window left the pinned run behind: the table shows the latest.
-        renderTable();
-      }
       return;
     }
-    // A click outside the window (a fresh selection that never really moved)
-    // clears it: show everything. A press that never moved the window leaves
-    // it as it was, with nothing to redraw unless data arrived meanwhile.
-    // Anything else is the dragged window.
-    if (empty || (drag.fresh && !drag.moved)) setWindow('all');
-    else if (drag.moved) setWindow('custom', selection.map((px) => +mini.x.invert(px)));
-    else if (!pendingSnapshots && !redrawAfterDrag) {
+    if (empty) drag.collapsed = true;
+    else if (drag.moved) drag.preview = selection.map((px) => +mini.x.invert(px));
+    // A drag that changed nothing leaves the window as it was, with little to
+    // redraw unless data or a resize arrived meanwhile.
+    endDrag();
+  }
+
+  // On release, or when the release went missing.
+  function endDrag() {
+    if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
+      const { moved } = drag;
       drag = null;
-      mini.moveTo(view.t0, view.t1); // undo a nudge within the click allowance
+      if (moved) {
+        // The chart previewed the drag; show the unchanged window again.
+        hideHover();
+        computeView();
+        renderChart();
+      }
+      mini.moveTo(view.t0, view.t1); // and undo the lens's move
+      if (commitAfterDrag) commit(); // a change made during the drag
       return;
     }
     finishDrag();
+  }
+
+  // How a drag ends, on release or when its release went missing: a collapsed
+  // drag, or a fresh press that never moved (a click outside the window),
+  // clears the window, keeping its end as 'All' in the menu does; one that
+  // ends on the runs it started with changes nothing; anything else is the
+  // dragged window. Returns whether the window changed.
+  function settleDrag() {
+    if (drag.collapsed || (drag.fresh && !drag.moved)) {
+      if (state.duration === null) return false; // already all history
+      setWindow(null, state.end);
+      return true;
+    }
+    if (!drag.moved) return false;
+    const [i0, i1] = runsIn(drag.preview);
+    if (i0 === drag.runs[0] && i1 === drag.runs[1]) return false;
+    // Moving the whole window keeps its duration; resizing it or drawing a
+    // new one sets the duration to the runs it covers.
+    if (!drag.fresh && (drag.mode === 'drag' || drag.mode === 'space') && state.duration != null) moveWindow(i1, state.end == null);
+    else setDraggedWindow(...drag.preview, state.end == null);
+    return true;
   }
 
   // The drag is over: everything is redrawn, which also catches up on a
@@ -977,6 +1184,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function finishDrag() {
     hideHover();
     drag = null;
+    commitAfterDrag = false; // commit() below covers it
     redrawAfterDrag = false;
     if (pendingSnapshots) {
       setSnapshots(pendingSnapshots);
@@ -1160,7 +1368,6 @@ footer b { color: var(--ink); font-weight: 600; }
     const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     $('st-time').textContent = fmtTime.format(snap.t);
-    $('st-latest').disabled = state.pinned == null;
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = [state.pool];
@@ -1275,7 +1482,9 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function pin(i) {
-    state.pinned = pinTime(i);
+    // In a frozen window, its last run is the window's own pin, however it was
+    // reached; any other run is the reader's.
+    state.pinned = pinFor(i);
     renderChart();
     renderTable();
   }
@@ -1288,6 +1497,98 @@ footer b { color: var(--ink); font-weight: 600; }
     document.querySelectorAll('.opts input, #range').forEach((el) => { el.disabled = !on; });
   }
 
+  // The range menu: a button that opens two groups of radio buttons, the
+  // window's duration and where it ends. Each applies at once and leaves the
+  // other as it is; the menu stays open until Escape, Enter in a box, or a
+  // click elsewhere.
+  function wireRange() {
+    const btn = $('range');
+    const pop = $('range-pop');
+    const text = $('range-custom');
+    const endAt = $('range-end-at');
+    const choose = (duration, end) => {
+      setWindow(duration, end);
+      hideHover();
+      renderAll();
+      commit();
+    };
+    const open = (on) => {
+      pop.hidden = !on;
+      btn.setAttribute('aria-expanded', String(on));
+      if (!on) return;
+      // Kept on screen on a narrow phone.
+      pop.style.left = '';
+      const over = pop.getBoundingClientRect().right - (document.documentElement.clientWidth - 16);
+      if (over > 0) pop.style.left = `${-over}px`;
+      pop.querySelector('input[name="range"]:checked')?.focus();
+    };
+    const close = () => { open(false); btn.focus(); };
+    // A typed duration applies when it parses; reported only on Enter or
+    // leaving the box.
+    const applyText = (report) => {
+      const ms = parseDuration(text.value);
+      if (ms === undefined) {
+        if (report && text.value.trim()) text.setAttribute('aria-invalid', 'true');
+        return false;
+      }
+      choose(ms, state.end);
+      return true;
+    };
+    // A typed end, kept to the data: no earlier than the second run, as a
+    // window shows two runs.
+    const applyEnd = () => {
+      const ms = new Date(endAt.value).getTime(); // (a datetime-local value reads as local time)
+      if (!Number.isFinite(ms)) return false;
+      choose(state.duration, Math.max(ms, +snapshots[Math.min(1, snapshots.length - 1)].t));
+      return true;
+    };
+    btn.addEventListener('click', () => open(pop.hidden));
+    document.addEventListener('pointerdown', (e) => {
+      if (!pop.hidden && !pop.contains(e.target) && e.target !== btn) open(false);
+    });
+    pop.addEventListener('focusout', (e) => {
+      if (!pop.hidden && e.relatedTarget && !pop.contains(e.relatedTarget) && e.relatedTarget !== btn) open(false);
+    });
+    pop.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      } else if (e.key === 'Enter' && e.target.type === 'radio') {
+        e.preventDefault();
+        if (e.target === $('range-custom-pick')) text.focus();
+        else if (e.target === $('range-end-pick')) endAt.focus();
+        else close();
+      }
+    });
+    pop.querySelectorAll('input[name="range"]').forEach((el) => {
+      el.addEventListener('change', () => (el.value === 'custom' ? applyText(false) : choose(DURATIONS[el.value], state.end)));
+    });
+    pop.querySelectorAll('input[name="range-end"]').forEach((el) => {
+      // Fixing a live window holds it at the latest run, to the minute.
+      el.addEventListener('change', () => choose(state.duration, el.value === 'live' ? null : ceilMinute(+snapshots[snapshots.length - 1].t)));
+    });
+    // A click on Custom or Fixed moves on to its box.
+    $('range-custom-pick').closest('label').addEventListener('click', (e) => { if (e.detail && e.target !== text) text.focus(); });
+    $('range-end-pick').closest('label').addEventListener('click', (e) => { if (e.detail && e.target !== endAt) endAt.focus(); });
+    text.addEventListener('input', () => {
+      $('range-custom-pick').checked = true;
+      text.removeAttribute('aria-invalid');
+    });
+    text.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (applyText(true)) close();
+    });
+    text.addEventListener('change', () => applyText(true));
+    endAt.addEventListener('change', applyEnd);
+    endAt.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      applyEnd();
+      close();
+    });
+  }
+
   function wire() {
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
@@ -1297,13 +1598,7 @@ footer b { color: var(--ink); font-weight: 600; }
         commit();
       });
     });
-    $('range').addEventListener('change', (e) => {
-      setWindow(e.target.value);
-      hideHover();
-      renderAll();
-      commit();
-    });
-    $('st-latest').addEventListener('click', () => pin(null));
+    wireRange();
     // Shadow under the frozen title bar only once the page has scrolled.
     const topbar = $('topbar');
     new IntersectionObserver(([e]) => topbar.classList.toggle('is-stuck', !e.isIntersecting))
@@ -1323,28 +1618,37 @@ footer b { color: var(--ink); font-weight: 600; }
       if (!view) return;
       const last = snapshots.length - 1;
       const end = view.i0 + view.visible.length - 1;
-      // With nothing pinned the table shows the latest run, which a dragged
-      // window may end before: the arrows then step in from its right edge.
-      const at = pinnedIndex() ?? Math.min(last, end + 1);
+      if (e.key === 'Escape') {
+        // Back to where the page rests: a frozen window's last run, or
+        // following new runs in a live one. Already there, there is nothing
+        // to do.
+        const home = state.end == null ? null : runAsOf(state.end);
+        if (home == null ? state.pinned == null : state.pinned === 'end') {
+          hideHover();
+          return;
+        }
+        e.preventDefault();
+        pin(home);
+        const shown = home ?? last;
+        if (shown >= view.i0 && shown <= end) showHover(shown - view.i0);
+        else hideHover();
+        return;
+      }
+      // The table's run may lie outside the window (or be the latest run,
+      // after its end); the arrows then step in from the nearer edge.
+      const at = Math.max(view.i0 - 1, Math.min(end + 1, pinnedIndex() ?? last));
       let i;
       if (e.key === 'ArrowLeft') i = at - 1;
       else if (e.key === 'ArrowRight') i = at + 1;
       else if (e.key === 'Home') i = view.i0;
       else if (e.key === 'End') i = end;
-      // Escape returns to the window's last run (the latest, unless the window
-      // was dragged); with nothing pinned there is nothing to return from.
-      else if (e.key === 'Escape') i = state.pinned == null ? null : end;
       else return;
-      if (i == null || i < view.i0 || i > end) {
-        if (e.key === 'Escape') hideHover();
+      e.preventDefault(); // the chart has these keys, so the page does not scroll
+      if (i < view.i0 || i > end) {
         // At the edge: show where the standings are, if that is in view.
-        if (i != null && at >= view.i0 && at <= end) {
-          e.preventDefault();
-          showHover(at - view.i0);
-        }
+        if (at >= view.i0 && at <= end) showHover(at - view.i0);
         return;
       }
-      e.preventDefault();
       pin(i);
       showHover((pinnedIndex() ?? last) - view.i0);
     });
@@ -1356,7 +1660,7 @@ footer b { color: var(--ink); font-weight: 600; }
       if (!drag?.byMouse) return;
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
-      if (drag) finishDrag();
+      if (drag) endDrag();
     };
     // d3 sees a pen as a mouse, too.
     const mouseLike = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
@@ -1454,6 +1758,9 @@ footer b { color: var(--ink); font-weight: 600; }
       latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
+    // The saved view keeps no pinned run, but a frozen window holds its
+    // standings (see setWindow).
+    if (state.end != null) state.pinned = 'end';
     renderAll();
     lastForm = savedForm(); // as loaded
     setControlsEnabled(true);
