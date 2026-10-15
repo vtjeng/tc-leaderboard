@@ -1103,13 +1103,14 @@ footer b { color: var(--ink); font-weight: 600; }
   let drag = null;
   const CLICK_SLOP_PX = 3;
   let pendingSnapshots = null; // data that arrived during a drag
+  let redrawAfterDrag = false; // a resize happened during a drag
   function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
-      // A press that starts a new selection (a click outside the window) is
-      // fresh. A move of the whole window or a fresh selection can be a click
-      // in disguise; a resize by a pixel or two is deliberate.
-      const fresh = mode !== 'drag' && (!selection || selection[1] - selection[0] < 1);
+      // A press on the strip outside the window starts a fresh selection. A
+      // move of the whole window or a fresh selection can be a click in
+      // disguise; a resize by a pixel or two is deliberate.
+      const fresh = Boolean(sourceEvent.target?.classList?.contains('overlay'));
       drag = {
         start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
         fresh,
@@ -1119,9 +1120,10 @@ footer b { color: var(--ink); font-weight: 600; }
       return;
     }
     if (!drag) return;
-    // A click on the strip starts a zero-width selection; it is not a window
-    // until the drag widens it, and a drag released that narrow clears it.
-    const empty = !selection || selection[1] - selection[0] < 1;
+    // A fresh selection is not a window until the drag widens it, and one
+    // released that narrow clears the window. (A window drawn narrower than a
+    // pixel, around a run or two, can still be grabbed and moved.)
+    const empty = !selection || (drag.fresh && selection[1] - selection[0] < 1);
     if (type === 'brush') {
       // Nor is a click's (or a finger tap's) jitter of a few pixels.
       const jitter = !drag.moved && drag.start
@@ -1142,8 +1144,9 @@ footer b { color: var(--ink); font-weight: 600; }
     // Anything else is the dragged window.
     if (empty || (drag.fresh && !drag.moved)) setWindow(null);
     else if (drag.moved) setDraggedWindow(...selection.map((px) => +mini.x.invert(px)));
-    else if (!pendingSnapshots) {
+    else if (!pendingSnapshots && !redrawAfterDrag) {
       drag = null;
+      mini.moveTo(view.t0, view.t1); // undo a nudge within the click allowance
       return;
     }
     finishDrag();
@@ -1154,6 +1157,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function finishDrag() {
     hideHover();
     drag = null;
+    redrawAfterDrag = false;
     if (pendingSnapshots) {
       setSnapshots(pendingSnapshots);
       pendingSnapshots = null;
@@ -1527,7 +1531,14 @@ footer b { color: var(--ink); font-weight: 600; }
       else if (e.key === 'Home') i = view.i0;
       else if (e.key === 'End') i = end;
       else return;
-      if (i < view.i0 || i > end) return;
+      if (i < view.i0 || i > end) {
+        // At the edge: show where the standings are, if that is in view.
+        if (at >= view.i0 && at <= end) {
+          e.preventDefault();
+          showHover(at - view.i0);
+        }
+        return;
+      }
       e.preventDefault();
       pin(i);
       showHover((pinnedIndex() ?? last) - view.i0);
@@ -1536,7 +1547,12 @@ footer b { color: var(--ink); font-weight: 600; }
     // A mouse drag's end can go missing (a release outside the frame). One
     // still open after the mouse is released, or while it moves with no
     // button held, is finished here; touch gestures are left to the brush.
-    const abandon = () => setTimeout(() => { if (drag?.byMouse) finishDrag(); });
+    const abandon = () => setTimeout(() => {
+      if (!drag?.byMouse) return;
+      // The brush's own mouseup ends its gesture, which ends ours as usual.
+      window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
+      if (drag) finishDrag();
+    });
     window.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse') abandon(); });
     window.addEventListener('pointermove', (e) => { if (drag?.byMouse && e.pointerType === 'mouse' && e.buttons === 0) abandon(); });
     let raf = 0;
@@ -1546,7 +1562,10 @@ footer b { color: var(--ink); font-weight: 600; }
         if (!view) return;
         // Redrawing the overview mid-drag would cut the drag short; the
         // drag's end redraws.
-        if (drag) return;
+        if (drag) {
+          redrawAfterDrag = true;
+          return;
+        }
         hideHover();
         renderChart();
         renderMini();
