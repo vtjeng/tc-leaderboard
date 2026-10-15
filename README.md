@@ -66,9 +66,11 @@ the address bar, so a copied link reproduces the view:
 - `utc_end`: where the window ends (absent: live, ending at the latest run).
 - `teams`: highlighted teams by colour; entry N is colour N, empty where that
   colour is free, so a link shows the same colours.
-- `metric`, `pool` (`combined`, `public`, `holdout`), `sort` and `dir`.
+- `metric`, `pool` (`combined`, `public`, `holdout`), `sort` (a table column:
+  `team`, `speed`, `playable` or a score and pool such as `points-public`) and
+  `dir` (`asc` or `desc`).
 
 `teams` is always present; the other parameters are left out at their
-defaults. A link with parameters sets the whole view; only a bare link, such as
+defaults, and `dir` when it is the column's usual direction. A link with parameters sets the whole view; only a bare link, such as
 the site's own address, restores the reader's saved view. Other parameters a
 shared link picks up (`utm_source`, `fbclid`) are left as they are.

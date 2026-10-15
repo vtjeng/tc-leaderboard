@@ -559,12 +559,12 @@ footer b { color: var(--ink); font-weight: 600; }
       if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) {
         state.duration = saved.duration;
       }
-      // An end before the data would show none of it; one before the second
-      // run is moved to it, as a window shows two runs. One after the latest
+      // An end before the second run (or the data) is moved to it, as a
+      // window shows two runs. One after the latest
       // run (saved against newer data, or the data is behind) is kept as it
       // is: the window shows up to the latest run, and runs up to its end are
       // the window's when they arrive.
-      if (Number.isFinite(saved.end) && saved.end >= first) state.end = Math.max(saved.end, +snapshots[Math.min(1, snapshots.length - 1)].t);
+      if (Number.isFinite(saved.end)) state.end = Math.max(saved.end, +snapshots[Math.min(1, snapshots.length - 1)].t);
     } else if (hasOwn(DURATIONS, saved.range)) {
       // Saves from before durations: a preset key, or a dragged window.
       state.duration = DURATIONS[saved.range];
@@ -691,7 +691,8 @@ footer b { color: var(--ink); font-weight: 600; }
   // they are. A value of ours that makes no sense falls back to its default.
   // Opening a link does not overwrite the saved view; the next change does.
   const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir'];
-  const isoMinute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
+  // Rounded up: a run at 13:45:39 is written 13:46, at or after it.
+  const isoMinute = (ms) => new Date(ceilMinute(ms)).toISOString().slice(0, 16) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
   // UTC. An offset may be +05, -0500 or +05:30 (Date.parse wants the last
   // form), a typed '+' arrives as a space, and a space may separate the date
@@ -795,9 +796,9 @@ footer b { color: var(--ink); font-weight: 600; }
     // A frozen window's own pin is written as its end, which names the same
     // run here and stays the window's in data with a later run before the end.
     const pinnedAt = pinnedIndex();
-    if (pinnedAt != null) put('as_of', isoMinute(ceilMinute(state.pinned === 'end' ? state.end : +snapshots[pinnedAt].t)));
+    if (pinnedAt != null) put('as_of', isoMinute(state.pinned === 'end' ? state.end : +snapshots[pinnedAt].t));
     if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
-    if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
+    if (state.end != null) put('utc_end', isoMinute(state.end));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', POOL_URL[state.pool]);
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
@@ -1650,7 +1651,8 @@ footer b { color: var(--ink); font-weight: 600; }
     // ended, and through setWindow holds the standings there too; going live
     // lets both follow new runs.
     $('range-freeze').addEventListener('click', () => {
-      setWindow(state.duration, state.end == null ? +snapshots[snapshots.length - 1].t : null);
+      // (To the minute, as a dragged window's end is.)
+      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
       hideHover();
       renderAll();
       commit();
