@@ -1108,11 +1108,13 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('class', 'line').attr('d', ([, pts]) => gapPath(line, pts))
       .attr('fill', 'none').style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`)
       .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
-    const ends = focus.map(([team, pts]) => {
-      const lastPt = [...pts].reverse().find((p) => p.v != null);
-      return lastPt ? { team, p: lastPt } : null;
-    }).filter(Boolean);
-    g.append('g').selectAll('circle').data(ends).join('circle')
+    // Each highlighted line is marked at the run the standings show, when it
+    // is in the window and the team has a value there.
+    const marks = shownT >= +view.t0 && shownT <= +view.t1 ? focus.map(([team, pts]) => {
+      const p = pts.find((q) => +q.t === shownT);
+      return p?.v != null ? { team, p } : null;
+    }).filter(Boolean) : [];
+    g.append('g').selectAll('circle').data(marks).join('circle')
       .attr('cx', (d) => x(d.p.t)).attr('cy', (d) => y(d.p.v)).attr('r', 4)
       .style('fill', (d) => `var(--s${state.highlight.get(d.team)})`)
       .style('stroke', 'var(--surface)').attr('stroke-width', 2);
