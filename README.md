@@ -52,3 +52,25 @@ HTTP and open <http://localhost:8000/>:
 ```sh
 python3 -m http.server
 ```
+
+The page remembers each reader's view in local storage and also mirrors it in
+the address bar, so a copied link reproduces the view:
+
+- `as_of`: the standings as of this time (UTC, to the minute): the last run at
+  or before it, held as new runs arrive. Absent, the standings follow the
+  latest run. A window dragged back from the latest run fills it in with the
+  window's end, and one made live again clears it; a run the reader picked
+  stays. It need not be inside the chart window.
+- `duration`: the chart window's length, such as `7d`, `36h`, `3d4h13m` or
+  `all` (absent: `30d`).
+- `utc_end`: where the window ends (absent: live, ending at the latest run).
+- `teams`: highlighted teams by colour; entry N is colour N, empty where that
+  colour is free, so a link shows the same colours.
+- `metric`, `pool` (`combined`, `public`, `holdout`), `sort` (a table column:
+  `team`, `speed`, `playable` or a score and pool such as `points-public`) and
+  `dir` (`asc` or `desc`).
+
+`teams` is always present; the other parameters are left out at their
+defaults, and `dir` when it is the column's usual direction. A link with parameters sets the whole view; only a bare link, such as
+the site's own address, restores the reader's saved view. Other parameters a
+shared link picks up (`utm_source`, `fbclid`) are left as they are.
