@@ -625,7 +625,11 @@ footer b { color: var(--ink); font-weight: 600; }
     // Before the data loads there is no view to save; saving the empty state
     // would replace the reader's saved teams. Mid-drag the window is not
     // settled; finishing the drag commits.
-    if (!view || drag) return;
+    if (!view) return;
+    if (drag) {
+      commitAfterDrag = true;
+      return;
+    }
     save();
     writeUrl();
   }
@@ -1169,6 +1173,7 @@ footer b { color: var(--ink); font-weight: 600; }
   const CLICK_SLOP_PX = 3;
   let pendingSnapshots = null; // data that arrived during a drag
   let redrawAfterDrag = false; // a resize happened during a drag
+  let commitAfterDrag = false; // a change made during a drag, saved at its end
   function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
@@ -1235,7 +1240,10 @@ footer b { color: var(--ink); font-weight: 600; }
         renderChart();
       }
       mini.moveTo(view.t0, view.t1); // and undo the lens's move
-      commit(); // anything that waited for the drag (a pin, a radio change)
+      // Save anything that waited for the drag (a radio change, a pin); a
+      // plain click saves nothing, so it cannot overwrite another tab's save.
+      if (commitAfterDrag) commit();
+      else writeUrl();
       return;
     }
     finishDrag();
@@ -1264,6 +1272,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function finishDrag() {
     hideHover();
     drag = null;
+    commitAfterDrag = false; // commit() below covers it
     redrawAfterDrag = false;
     if (pendingSnapshots) {
       setSnapshots(pendingSnapshots);
@@ -1705,8 +1714,9 @@ footer b { color: var(--ink); font-weight: 600; }
     knownTeams = new Set();
     next.forEach((s) => s.byTeam.forEach((_, team) => knownTeams.add(team)));
     // A highlighted team that has left the data would hold a colour and
-    // draw nothing.
+    // draw nothing. Dropping it is not the reader changing a link's view.
     state.highlight.forEach((_, team) => { if (!knownTeams.has(team)) state.highlight.delete(team); });
+    if (linkView != null) linkView = savedForm();
   }
 
   function renderLatestRun() {
@@ -1729,9 +1739,6 @@ footer b { color: var(--ink); font-weight: 600; }
           setSnapshots(next);
           hideHover();
           renderAll();
-          // setSnapshots may have dropped a team that left the data; that is
-          // not the reader changing a link's view.
-          if (linkView != null) linkView = savedForm();
           commit();
         }
       }
