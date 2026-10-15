@@ -146,6 +146,9 @@ h1 {
 .opts label:hover span { background: var(--wash); }
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
+/* Disabled until the data loads. */
+.opts label:has(input:disabled), .select-wrap select:disabled { opacity: 0.55; cursor: progress; }
+.opts label:has(input:disabled) span { pointer-events: none; }
 .seg-range { margin-left: auto; }
 .sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
@@ -513,7 +516,9 @@ footer b { color: var(--ink); font-weight: 600; }
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // scale and brush from the last overview render
   // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
-  // overview window; window then holds its [start, end] in epoch ms.
+  // overview window. window holds a dragged window's [start, end] in epoch
+  // ms, or where a preset has slid to keep a pinned run in view (null while
+  // the preset ends at the latest run).
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
@@ -566,14 +571,14 @@ footer b { color: var(--ink); font-weight: 600; }
       // The run is the link's point; a window that leaves it out gives way.
       setWindow(linked.range ?? DEFAULTS.range); // readUrl keeps only a valid preset
     }
-    // A slid window counts only if it shows the run; otherwise the preset
-    // slides to the run itself.
+    // A slid window counts only if it shows the run and ends before the
+    // latest run; otherwise the preset slides to the run itself.
     const days = RANGE_DAYS[state.range];
     const t = +snapshots[state.pinned].t;
-    // Links give times to the second, so allow a second either side; the
-    // slide then settles the window exactly on the run.
     const span = days * DAY_MS;
-    if (days && linked.from - 1000 <= t && t <= linked.from + span + 1000) state.window = [linked.from, linked.from + span];
+    if (days && linked.from <= t && t <= linked.from + span && linked.from + span < +snapshots[snapshots.length - 1].t) {
+      state.window = [linked.from, linked.from + span];
+    }
     return named;
   }
 
@@ -662,7 +667,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // claim the URL on their own.
   const VALID = {
     run: (v) => findRun(parseUtc(v)) >= 0,
-    from: (v, p) => isTime(v) && (parseUtc(v) < parseUtc(p.get('to')) || isOwn(p, 'run')),
+    // A from with a later to is a dragged window; with no time for to (a
+    // reversed pair is neither), a slid preset's, which needs its run.
+    from: (v, p) => isTime(v) && (isTime(p.get('to')) ? parseUtc(v) < parseUtc(p.get('to')) : isOwn(p, 'run')),
     to: (v, p) => parseUtc(p.get('from')) < parseUtc(v),
     range: (v) => hasOwn(RANGE_DAYS, v.toLowerCase()),
     metric: (v) => hasOwn(METRICS, v.toLowerCase()),
@@ -686,7 +693,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const to = parseUtc(get('to'));
     if (from < to) {
       linked.window = [from, to];
-    } else if (get('to') == null) {
+    } else if (!isTime(params.get('to'))) {
       linked.from = from;
     }
     const key = word('sort');
@@ -718,6 +725,8 @@ footer b { color: var(--ink); font-weight: 600; }
   let urlRetryAt = 0; // after a refusal, no write before this
   function writeUrl() {
     clearTimeout(urlTimer);
+    // Mid-drag the window is not settled; finishing the drag writes.
+    if (drag) return;
     const now = Date.now();
     if (now < urlRetryAt) {
       urlTimer = setTimeout(writeUrl, urlRetryAt - now);
@@ -737,14 +746,16 @@ footer b { color: var(--ink); font-weight: 600; }
     // Parameters that are not the view's (utm_source and the like) stay.
     if (!view) return;
     const params = new URLSearchParams(location.search);
-    // Collected before deleting: whether dir or to is the view's depends on
-    // sort and from.
-    URL_KEYS.filter((k) => isOwn(params, k)).forEach((k) => params.delete(k));
-    const written = new Set();
-    const put = (k, v) => {
-      params.set(k, v);
-      written.add(k);
-    };
+    // The view's parameters now in the address bar, to replace. A run= in the
+    // page's own format stays the page's after its run leaves the data.
+    const drop = new Set(URL_KEYS.filter((k) => isOwn(params, k)));
+    if (isTime(params.get('run'))) {
+      drop.add('run');
+      // So does the from of a slid window beside it.
+      if (isTime(params.get('from')) && !isTime(params.get('to'))) drop.add('from');
+    }
+    const ours = new Map();
+    const put = (k, v) => ours.set(k, v);
     if (state.pinned != null) put('run', isoSecond(+snapshots[state.pinned].t));
     if (state.range === 'custom' && state.window) {
       const [from, to] = linkWindow();
@@ -752,14 +763,7 @@ footer b { color: var(--ink); font-weight: 600; }
       put('to', isoSecond(to));
     } else {
       if (state.range !== DEFAULTS.range) put('range', state.range);
-      if (state.window) {
-        // Whole seconds: the earlier or later second, whichever reopens the
-        // window on the same runs.
-        const [w0, w1] = state.window;
-        const runs = runsIn(state.window).join();
-        const lo = Math.floor(w0 / 1000) * 1000;
-        put('from', isoSecond([lo, lo + 1000].find((c) => runsIn([c, c + w1 - w0]).join() === runs) ?? lo));
-      }
+      if (state.window) put('from', isoSecond(state.window[0])); // whole seconds: see slidePreset
     }
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', state.pool);
@@ -770,13 +774,21 @@ footer b { color: var(--ink); font-weight: 600; }
     const slots = [];
     state.highlight.forEach((slot, team) => { slots[slot - 1] = team; });
     put('teams', Array.from(slots, (team) => (team == null ? '' : escapeTeam(team))).join(','));
-    // A foreign dir, to or from that the parameters just written would make
+    // Other parameters keep their exact text. Ours leave commas and colons
+    // bare, which a query value allows, so links stay readable; a comma
+    // escaped inside a team name is %252C by then, so this cannot touch it.
+    const keyOf = (part) => {
+      try { return decodeURIComponent(part.split('=')[0].replace(/\+/g, ' ')); } catch { return part; }
+    };
+    const enc = (v) => encodeURIComponent(v).replace(/%2C/g, ',').replace(/%3A/g, ':');
+    const written = [...ours].map(([k, v]) => `${k}=${enc(v)}`);
+    let kept = location.search.slice(1).split('&').filter((part) => part && !drop.has(keyOf(part)) && !ours.has(keyOf(part)));
+    // A foreign dir, to or from that the parameters written here would make
     // meaningful (dir next to our sort) is dropped rather than misread.
-    ['dir', 'to', 'from'].forEach((k) => { if (!written.has(k) && isOwn(params, k)) params.delete(k); });
-    // Commas and colons need no escaping in a query value; leaving them bare
-    // keeps the link readable. Escaped characters in team names are now %25...,
-    // so this cannot touch them.
-    const query = params.toString().replace(/%2C/g, ',').replace(/%3A/g, ':');
+    const next = new URLSearchParams([...kept, ...written].join('&'));
+    const misread = ['dir', 'to', 'from'].filter((k) => !ours.has(k) && isOwn(next, k));
+    kept = kept.filter((part) => !misread.includes(keyOf(part)));
+    const query = [...kept, ...written].join('&');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
     urlWrites.push(Date.now());
@@ -825,23 +837,28 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // A preset window keeps the pinned run in view, sliding only as far as it
   // must when the run leaves it, and returns to the latest run when unpinned.
-  // Returns whether the window moved.
+  // Its edges are whole seconds, as a link gives them, so a link reopens it
+  // exactly.
   function slidePreset() {
     const days = RANGE_DAYS[state.range];
-    if (!days) return false;
-    const before = state.window;
+    if (!days) return;
     if (state.pinned == null) {
       state.window = null;
-      return before != null;
+      return;
     }
     const t = +snapshots[state.pinned].t;
     const [w0, w1] = currentWindow();
     const span = days * DAY_MS;
-    if (t < w0) state.window = [t, t + span];
-    else if (t > w1) state.window = [t - span, t];
+    const SEC = 1000;
+    if (t < w0) {
+      const start = Math.floor(t / SEC) * SEC;
+      state.window = [start, start + span];
+    } else if (t > w1) {
+      const end = Math.ceil(t / SEC) * SEC;
+      state.window = [end - span, end];
+    }
     // A window reaching the latest run is the preset's own.
     if (state.window && state.window[1] >= +snapshots[snapshots.length - 1].t) state.window = null;
-    return state.window !== before;
   }
 
   // The first and last runs a window shows. A window narrower than the gap
@@ -858,10 +875,6 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function computeView() {
     slidePreset();
-    buildView();
-  }
-
-  function buildView() {
     const metric = METRICS[state.metric];
     const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
@@ -1114,30 +1127,29 @@ footer b { color: var(--ink); font-weight: 600; }
   let drag = null;
   const CLICK_SLOP_PX = 3;
   let pendingSnapshots = null; // data that arrived during a drag
-  function onBrush({ selection, sourceEvent, type }) {
+  function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
-      drag = { pin: state.pinned, start: selection && [...selection], moved: false };
+      // Only a move of the whole window ('drag') can be a click in disguise;
+      // a resize by a pixel or two is deliberate.
+      drag = { pin: state.pinned, start: mode === 'drag' ? [...selection] : null, moved: false };
       return;
     }
     // No drag, or one on a brush renderMini has since replaced: its events
     // are ignored until the next drag starts.
     if (!drag || drag.orphan) {
-      if (type === 'end' && drag) {
-        // Its steps may already have moved the window.
-        endDrag();
-        commit();
-      }
+      // Its steps may already have moved the window.
+      if (type === 'end' && drag) finishDrag();
       return;
     }
     // A click on the strip starts a zero-width selection; it is not a window
     // until the drag widens it, and a drag released that narrow clears it.
     const empty = !selection || selection[1] - selection[0] < 1;
-    // Nor is a click's (or a finger tap's) jitter of a few pixels.
-    const still = !empty && !drag.moved && drag.start
-      && Math.abs(drag.start[0] - selection[0]) < CLICK_SLOP_PX && Math.abs(drag.start[1] - selection[1]) < CLICK_SLOP_PX;
     if (type === 'brush') {
-      if (empty || still) return;
+      // Nor is a click's (or a finger tap's) jitter of a few pixels.
+      const jitter = !drag.moved && drag.start
+        && Math.abs(drag.start[0] - selection[0]) < CLICK_SLOP_PX && Math.abs(drag.start[1] - selection[1]) < CLICK_SLOP_PX;
+      if (empty || jitter) return;
       drag.moved = true;
       setWindow('custom', selection.map((px) => +mini.x.invert(px)));
       const shown = state.pinned;
@@ -1148,32 +1160,32 @@ footer b { color: var(--ink); font-weight: 600; }
       renderChart();
       if (state.pinned !== shown) {
         // The window left the pinned run behind: the table shows the latest.
+        // The URL waits for the release.
         renderTable();
-        writeUrl();
       }
       return;
     }
-    hideHover();
-    state.pinned = drag.pin;
-    // A click outside the window clears it (show everything); a click inside
-    // leaves it as it was; anything else is the dragged window.
+    // A click outside the window clears it (show everything); a press that
+    // never moved it leaves it as it was; anything else is the dragged window.
     if (empty) setWindow('all');
-    else if (!still) setWindow('custom', selection.map((px) => +mini.x.invert(px)));
-    endDrag();
-    if (still) writeUrl();
-    else commit();
+    else if (drag.moved) setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+    finishDrag();
   }
 
-  // The drag is over: redraw everything, which also catches up on a resize,
-  // a slide from a pin made mid-drag, and data that arrived during it. The
-  // caller writes the URL (or commits).
-  function endDrag() {
+  // The drag is over: it keeps the pin it began with (if the final window
+  // shows it), and everything is redrawn, which also catches up on a resize,
+  // a slide from a pin made mid-drag, and data that arrived during it.
+  function finishDrag() {
+    hideHover();
+    state.pinned = drag.pin;
     drag = null;
     if (pendingSnapshots) {
       applySnapshots(pendingSnapshots);
       pendingSnapshots = null;
+      renderLatestRun();
     }
     renderAll();
+    commit();
   }
 
   function nearestIndex(px) {
@@ -1275,7 +1287,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (key === 'team') return r.team.toLowerCase();
     if (key === 'speed') return r.speed_per_move_ms;
     if (key === 'playable') return r.playable == null ? null : Number(r.playable);
-    const [group, pool] = key.split('-');
+    const { group, pool } = parseSortKey(key);
     const v = METRICS[TABLE_GROUPS.find((g) => g.col === group).metric].value(r, pool);
     return v == null || Number.isNaN(v) ? null : v;
   }
@@ -1467,12 +1479,16 @@ footer b { color: var(--ink); font-weight: 600; }
     state.pinned = normalisePin(i);
     // A pin made mid-drag (arrow keys) is the one the drag ends with.
     if (drag) drag.pin = state.pinned;
-    if (slidePreset()) {
+    const win = state.window;
+    computeView();
+    if (state.window !== win) {
       // The preset window slid; move the overview's window to match rather
       // than redrawing the strip.
-      buildView();
       renderFilters();
-      if (!drag) mini.moveTo(view.t0, view.t1);
+      // A drag under way would rebuild the window from the brush's old place
+      // on its next step, so it ends here; its release finishes it.
+      if (drag) drag.orphan = true;
+      mini.moveTo(view.t0, view.t1);
     }
     renderChart();
     renderTable();
@@ -1547,6 +1563,15 @@ footer b { color: var(--ink); font-weight: 600; }
       showHover((state.pinned ?? last) - view.i0);
     });
     node.addEventListener('blur', hideHover);
+    // The brush's end can go missing (a release outside the frame, an
+    // interrupted touch). A drag still open after the primary pointer is
+    // released, or while it moves with no button held, is finished here.
+    const abandon = (e) => {
+      if (e.isPrimary) setTimeout(() => { if (drag) finishDrag(); });
+    };
+    window.addEventListener('pointerup', abandon);
+    window.addEventListener('pointercancel', abandon);
+    window.addEventListener('pointermove', (e) => { if (drag && e.pointerType === 'mouse' && e.buttons === 0) abandon(e); });
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
@@ -1579,7 +1604,8 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function setSnapshots(next) {
     snapshots = next;
-    knownTeams = new Set(next.flatMap((s) => [...s.byTeam.keys()]));
+    knownTeams = new Set();
+    next.forEach((s) => s.byTeam.forEach((_, team) => knownTeams.add(team)));
   }
 
   function renderLatestRun() {

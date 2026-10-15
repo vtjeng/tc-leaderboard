@@ -56,8 +56,8 @@ python3 -m http.server
 The page remembers each reader's view in local storage and also mirrors it in
 the address bar, so a copied link reproduces the view: the standings run
 (`run`), the chart window (a preset `range`, or a dragged window as `from` and
-`to` in UTC), the highlighted teams in colour order (`teams`, with an empty
-entry for each free colour), and the metric, pool and table sort (`metric`,
+`to` in UTC), the highlighted teams by colour (`teams`: entry N is colour N,
+empty where that colour is free), and the metric, pool and table sort (`metric`,
 `pool`, `sort`, `dir`). `teams` is always present; the other parameters are
 left out at their defaults. A link without `run` shows the latest run when it
 is opened. A preset range counts back from the latest run; when the pinned run
