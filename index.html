@@ -554,16 +554,18 @@ footer b { color: var(--ink); font-weight: 600; }
     // inherited one like toString.
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
-    if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) {
-      state.duration = saved.duration;
-    }
-    // An end before the data would show none of it; one after the latest run
-    // (saved against newer data) holds at it, rather than letting the frozen
-    // window grow as runs arrive.
-    if (Number.isFinite(saved.end) && saved.end >= first) state.end = Math.min(saved.end, ceilMinute(last));
-    // Saves from before durations: a preset key, or a dragged window.
-    if (saved.duration === undefined && hasOwn(DURATIONS, saved.range)) state.duration = DURATIONS[saved.range];
-    if (saved.duration === undefined && saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
+    if (saved.duration !== undefined || saved.end !== undefined) {
+      if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) {
+        state.duration = saved.duration;
+      }
+      // An end before the data would show none of it; one after the latest
+      // run (saved against newer data) holds at it, rather than letting the
+      // frozen window grow as runs arrive.
+      if (Number.isFinite(saved.end) && saved.end >= first) state.end = Math.min(saved.end, ceilMinute(last));
+    } else if (hasOwn(DURATIONS, saved.range)) {
+      // Saves from before durations: a preset key, or a dragged window.
+      state.duration = DURATIONS[saved.range];
+    } else if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
         && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
         && saved.window[1] >= first && saved.window[0] <= last) {
       setDraggedWindow(...saved.window); // snapped, and live if it reached the latest run
@@ -590,14 +592,16 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   // state.pinned is the pinned run's time, so it names the same run however
-  // the list of runs changes. Pinning the latest run is pinning nothing.
-  const pinTime = (i) => (i == null || i < 0 || i >= snapshots.length - 1 ? null : +snapshots[i].t);
-  // The pinned run's index, or null when nothing (or the latest run) is pinned
-  // or the run has left the data.
+  // the list of runs changes. In a live window, pinning the latest run is
+  // pinning nothing, so the standings follow new runs; a frozen window holds
+  // the run itself.
+  const pinTime = (i) => (i == null || i < 0 || (i >= snapshots.length - 1 && state.end == null) ? null : +snapshots[i].t);
+  // The pinned run's index, or null when nothing is pinned or the run has left
+  // the data.
   function pinnedIndex() {
     if (state.pinned == null) return null;
     const i = byTime.left(snapshots, state.pinned);
-    return i < snapshots.length - 1 && +snapshots[i].t === state.pinned ? i : null;
+    return i < snapshots.length && +snapshots[i].t === state.pinned ? i : null;
   }
 
   function loadSaved() {
@@ -1144,6 +1148,7 @@ footer b { color: var(--ink); font-weight: 600; }
         fresh,
         moved: false,
         byMouse: sourceEvent.type.startsWith('mouse'),
+        runs: runsIn(currentWindow()), // the runs the window showed before
       };
       return;
     }
@@ -1159,9 +1164,12 @@ footer b { color: var(--ink); font-weight: 600; }
       if (empty || jitter) {
         // A drag shrunk back to nothing shows its lens collapsing; release
         // clears the window.
-        if (empty && drag.moved) {
+        if (empty && drag.moved && !drag.collapsed) {
           drag.collapsed = true;
+          drag.preview = [-Infinity, state.end ?? Infinity]; // all history
           mini.decorate(selection);
+          computeView();
+          renderChart();
         }
         return;
       }
@@ -1174,18 +1182,33 @@ footer b { color: var(--ink); font-weight: 600; }
       renderChart(); // the menu and end status catch up on release
       return;
     }
-    // A click outside the window (a fresh selection that never really moved)
-    // clears it: show everything. A press that never moved the window leaves
-    // it as it was, with nothing to redraw unless data arrived meanwhile.
-    // Anything else is the dragged window.
-    if (empty || (drag.fresh && !drag.moved)) setWindow(null, state.end); // as 'All' in the menu does
-    else if (drag.moved) setDraggedWindow(...selection.map((px) => +mini.x.invert(px)));
-    else if (!pendingSnapshots && !redrawAfterDrag) {
+    if (empty) drag.collapsed = true;
+    else if (drag.moved) drag.preview = selection.map((px) => +mini.x.invert(px));
+    // A press that never moved the window leaves it as it was, with nothing to
+    // redraw unless data arrived meanwhile.
+    if (!settleDrag() && !drag.moved && !pendingSnapshots && !redrawAfterDrag) {
       drag = null;
       mini.moveTo(view.t0, view.t1); // undo a nudge within the click allowance
       return;
     }
     finishDrag();
+  }
+
+  // How a drag ends, on release or when its release went missing: a collapsed
+  // drag, or a fresh press that never moved (a click outside the window),
+  // clears the window, keeping its end as 'All' in the menu does; one that
+  // ends on the runs it started with changes nothing; anything else is the
+  // dragged window. Returns whether the window changed.
+  function settleDrag() {
+    if (drag.collapsed || (drag.fresh && !drag.moved)) {
+      setWindow(null, state.end);
+      return true;
+    }
+    if (!drag.moved) return false;
+    const [i0, i1] = runsIn(drag.preview);
+    if (i0 === drag.runs[0] && i1 === drag.runs[1]) return false;
+    setDraggedWindow(...drag.preview);
+    return true;
   }
 
   // The drag is over: everything is redrawn, which also catches up on a
@@ -1525,6 +1548,8 @@ footer b { color: var(--ink); font-weight: 600; }
     // new runs.
     $('range-freeze').addEventListener('click', () => {
       setWindow(state.duration, state.end == null ? +snapshots[snapshots.length - 1].t : null);
+      // Live, a pin on the latest run means following new runs again.
+      if (state.end == null && pinnedIndex() === snapshots.length - 1) state.pinned = null;
       hideHover();
       renderAll();
       commit();
@@ -1570,15 +1595,12 @@ footer b { color: var(--ink); font-weight: 600; }
       else if (e.key === 'Home') i = view.i0;
       else if (e.key === 'End') i = end;
       else return;
+      e.preventDefault(); // the chart has these keys, so the page does not scroll
       if (i < view.i0 || i > end) {
         // At the edge: show where the standings are, if that is in view.
-        if (at >= view.i0 && at <= end) {
-          e.preventDefault();
-          showHover(at - view.i0);
-        }
+        if (at >= view.i0 && at <= end) showHover(at - view.i0);
         return;
       }
-      e.preventDefault();
       pin(i);
       showHover((pinnedIndex() ?? last) - view.i0);
     });
@@ -1591,9 +1613,7 @@ footer b { color: var(--ink); font-weight: 600; }
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
       if (drag) {
-        // As a release there would: a collapsed drag clears the window.
-        if (drag.collapsed) setWindow(null, state.end);
-        else if (drag.preview) setDraggedWindow(...drag.preview);
+        settleDrag();
         finishDrag();
       }
     };
