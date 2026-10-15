@@ -637,6 +637,7 @@ footer b { color: var(--ink); font-weight: 600; }
       commitAfterDrag = true;
       return;
     }
+    commitAfterDrag = false;
     save();
     writeUrl();
   }
@@ -837,15 +838,21 @@ footer b { color: var(--ink); font-weight: 600; }
   // (autoPin) so the pin moves with the window and goes when it goes live. A
   // pin the reader set is never touched here.
   function setWindow(duration, end = null) {
+    // (Only a window that moves takes an empty pin: after Show latest, a new
+    // duration on the same frozen end leaves the standings following.)
+    const moved = end !== state.end;
     state.duration = duration;
     state.end = end;
-    if (end != null && (state.pinned == null || state.autoPin)) {
-      state.pinned = +snapshots[runAsOf(end)].t;
-      state.autoPin = true;
-    } else if (end == null && state.autoPin) {
+    if (end != null && (state.autoPin || (state.pinned == null && moved))) holdFrozen();
+    else if (end == null && state.autoPin) {
       state.pinned = null;
       state.autoPin = false;
     }
+  }
+  // Pins a frozen window's last run as the window's own.
+  function holdFrozen() {
+    state.pinned = +snapshots[runAsOf(state.end)].t;
+    state.autoPin = true;
   }
 
   function currentWindow() {
@@ -902,7 +909,10 @@ footer b { color: var(--ink); font-weight: 600; }
       }));
     });
     // A pinned run that has left the data is unpinned.
-    if (pinnedIndex() == null) {
+    // A frozen window's own pin follows its last run, should the runs change
+    // on refresh; a run of the reader's that has left the data is unpinned.
+    if (state.autoPin && state.end != null) holdFrozen();
+    else if (pinnedIndex() == null) {
       state.pinned = null;
       state.autoPin = false;
     }
@@ -1470,7 +1480,9 @@ footer b { color: var(--ink); font-weight: 600; }
     $('st-time').textContent = fmtTime.format(snap.t);
     // Enabled while a run is pinned, even the latest: it then means following
     // new runs again.
-    $('st-latest').disabled = state.pinned == null;
+    // (In a frozen window already showing the latest run, it would only
+    // switch the table to following quietly; Go live does that openly.)
+    $('st-latest').disabled = state.pinned == null || (state.end != null && idx === snapshots.length - 1);
     // In a live window, unpinning the latest run means following new runs; in
     // a frozen one it shows the latest run, but the chart stays frozen.
     $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null && state.end == null ? 'Follow new runs' : 'Show latest';
@@ -1589,7 +1601,9 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = pinTime(i);
-    state.autoPin = false; // the reader's own pin (or none)
+    // In a frozen window, its last run is the window's own pin, however it was
+    // reached; any other run is the reader's.
+    state.autoPin = state.end != null && i != null && i === runAsOf(state.end);
     renderChart();
     renderTable();
     writeUrl();
@@ -1649,14 +1663,18 @@ footer b { color: var(--ink); font-weight: 600; }
       const last = snapshots.length - 1;
       const end = view.i0 + view.visible.length - 1;
       if (e.key === 'Escape') {
-        // Back to the latest run; with nothing pinned there is nothing to do.
-        if (state.pinned == null) {
+        // Back to where the page rests: a frozen window's last run, or
+        // following new runs in a live one. Already there, there is nothing
+        // to do.
+        const home = state.end == null ? null : runAsOf(state.end);
+        if (home == null ? state.pinned == null : pinnedIndex() === home) {
           hideHover();
           return;
         }
         e.preventDefault();
-        pin(null);
-        if (last <= end) showHover(last - view.i0);
+        pin(home);
+        const shown = home ?? last;
+        if (shown >= view.i0 && shown <= end) showHover(shown - view.i0);
         else hideHover();
         return;
       }
@@ -1787,7 +1805,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     // The saved view keeps no pinned run, but a frozen window holds its
     // standings (see setWindow). A link says for itself, with as_of.
-    if (!linked && state.end != null) setWindow(state.duration, state.end);
+    if (!linked && state.end != null) holdFrozen();
     renderAll();
     if (linked) linkView = savedForm();
     writeUrl();
