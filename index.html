@@ -630,8 +630,9 @@ footer b { color: var(--ink); font-weight: 600; }
   function applyLink(linked) {
     const named = applyView(linked);
     // A frozen window's link names its last run when the window held it (see
-    // setWindow); that pin stays the window's, to go when it goes live.
-    state.pinned = pinFor(runAsOf(linked.asOf));
+    // setWindow), as its end; that pin stays the window's, to go when it goes
+    // live. (The end may have been moved up to the second run.)
+    state.pinned = state.end != null && linked.asOf === linked.end ? 'end' : pinFor(runAsOf(linked.asOf));
     return named;
   }
 
@@ -705,7 +706,9 @@ footer b { color: var(--ink); font-weight: 600; }
     const s = v.trim().toUpperCase()
       .replace(OFFSET, (_, t, sign, h, m) => `${t}${sign === '-' ? '-' : '+'}${h}:${m ?? '00'}`)
       .replace(SPACED_TIME, '$1T$2');
-    return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
+    // Rounded up to the minute, as links are written, so the page shows
+    // what its own rewrite of the link will say.
+    return ceilMinute(Date.parse(NO_ZONE.test(s) ? s + 'Z' : s));
   }
   // as_of reads with runAsOf: the standings as of a time are the last run at
   // or before it. A link names its run rounded up to the minute, and runs are
@@ -1788,12 +1791,15 @@ footer b { color: var(--ink); font-weight: 600; }
           // Redrawing the overview would cut a drag short; it waits for the end.
           pendingSnapshots = next;
         } else {
+          const pinned = state.pinned;
           const dropped = setSnapshots(next);
           hideHover();
           renderAll();
           // Saving only what changed: an unchanged view saved hourly would
-          // overwrite a newer one saved in another tab.
+          // overwrite a newer one saved in another tab. (A pinned run that
+          // left the data is not saved, but the address bar says so.)
           if (dropped) commit();
+          else if (state.pinned !== pinned) writeUrl();
         }
       }
     } catch {
