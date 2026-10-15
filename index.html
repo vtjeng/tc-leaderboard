@@ -146,9 +146,9 @@ h1 {
 .opts label:hover span { background: var(--wash); }
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
-/* Disabled until the data loads. */
-.opts label:has(input:disabled), .select-wrap select:disabled { opacity: 0.55; cursor: progress; }
-.opts label:has(input:disabled) span { pointer-events: none; }
+/* Dimmed until the data loads, or if it fails to. */
+body.loading .opts, body.loading .range-row, body.load-failed .opts, body.load-failed .range-row { opacity: 0.55; pointer-events: none; }
+body.loading .controls { cursor: progress; }
 .seg-range { margin-left: auto; }
 .range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .range-end { font-size: var(--step--1); color: var(--ink-2); white-space: nowrap; }
@@ -1106,9 +1106,16 @@ footer b { color: var(--ink); font-weight: 600; }
   function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
-      // Only a move of the whole window ('drag') can be a click in disguise;
-      // a resize by a pixel or two is deliberate.
-      drag = { start: mode === 'drag' ? [...selection] : null, moved: false };
+      // A press that starts a new selection (a click outside the window) is
+      // fresh. A move of the whole window or a fresh selection can be a click
+      // in disguise; a resize by a pixel or two is deliberate.
+      const fresh = mode !== 'drag' && (!selection || selection[1] - selection[0] < 1);
+      drag = {
+        start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
+        fresh,
+        moved: false,
+        byMouse: sourceEvent.type.startsWith('mouse'),
+      };
       return;
     }
     if (!drag) return;
@@ -1129,10 +1136,16 @@ footer b { color: var(--ink); font-weight: 600; }
       renderChart();
       return;
     }
-    // A click outside the window clears it (show everything); a press that
-    // never moved it leaves it as it was; anything else is the dragged window.
-    if (empty) setWindow(null);
+    // A click outside the window (a fresh selection that never really moved)
+    // clears it: show everything. A press that never moved the window leaves
+    // it as it was, with nothing to redraw unless data arrived meanwhile.
+    // Anything else is the dragged window.
+    if (empty || (drag.fresh && !drag.moved)) setWindow(null);
     else if (drag.moved) setDraggedWindow(...selection.map((px) => +mini.x.invert(px)));
+    else if (!pendingSnapshots) {
+      drag = null;
+      return;
+    }
     finishDrag();
   }
 
@@ -1447,6 +1460,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // The controls wait for the data: until then the link or saved view has
   // not been applied, and a change would be lost.
   function setControlsEnabled(on) {
+    document.body.classList.toggle('loading', !on);
     document.querySelectorAll('.opts input, #range, #range-freeze').forEach((el) => { el.disabled = !on; });
   }
 
@@ -1519,15 +1533,12 @@ footer b { color: var(--ink); font-weight: 600; }
       showHover((pinnedIndex() ?? last) - view.i0);
     });
     node.addEventListener('blur', hideHover);
-    // The brush's end can go missing (a release outside the frame, an
-    // interrupted touch). A drag still open after the primary pointer is
-    // released, or while it moves with no button held, is finished here.
-    const abandon = (e) => {
-      if (e.isPrimary) setTimeout(() => { if (drag) finishDrag(); });
-    };
-    window.addEventListener('pointerup', abandon);
-    window.addEventListener('pointercancel', abandon);
-    window.addEventListener('pointermove', (e) => { if (drag && e.pointerType === 'mouse' && e.buttons === 0) abandon(e); });
+    // A mouse drag's end can go missing (a release outside the frame). One
+    // still open after the mouse is released, or while it moves with no
+    // button held, is finished here; touch gestures are left to the brush.
+    const abandon = () => setTimeout(() => { if (drag?.byMouse) finishDrag(); });
+    window.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse') abandon(); });
+    window.addEventListener('pointermove', (e) => { if (drag?.byMouse && e.pointerType === 'mouse' && e.buttons === 0) abandon(); });
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
@@ -1551,8 +1562,8 @@ footer b { color: var(--ink); font-weight: 600; }
 
   async function loadSnapshots() {
     const rows = await d3.csv(CSV_URL, { cache: 'no-store' }, d3.autoType);
-    const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
-    return [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
+    const runs = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
+    return [...runs].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
       t: new Date(t),
       byTeam: new Map(rs.map((r) => [r.team, r])),
     }));
@@ -1598,6 +1609,7 @@ footer b { color: var(--ink); font-weight: 600; }
       setSnapshots(await loadSnapshots());
     } catch (err) {
       $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
+      document.body.classList.replace('loading', 'load-failed');
       return;
     }
     renderLatestRun();
