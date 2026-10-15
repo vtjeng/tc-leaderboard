@@ -390,7 +390,7 @@ footer b { color: var(--ink); font-weight: 600; }
               <option value="d7">Last 7 days</option>
             </select>
           </span>
-          <span class="range-end" id="range-end" aria-live="polite">Live</span>
+          <span class="range-end" id="range-end"></span>
           <button type="button" class="btn" id="range-freeze" disabled>Freeze</button>
         </div>
       </div>
@@ -810,8 +810,6 @@ footer b { color: var(--ink); font-weight: 600; }
   function setWindow(duration, end = null) {
     state.duration = duration;
     state.end = end;
-    // Live, a pin on the latest run means following new runs (see pinTime).
-    if (end == null && state.pinned != null && pinnedIndex() === snapshots.length - 1) state.pinned = null;
   }
 
   function currentWindow() {
@@ -819,8 +817,11 @@ footer b { color: var(--ink); font-weight: 600; }
     const last = +snapshots[snapshots.length - 1].t;
     // Mid-drag the chart previews the dragged window; state changes on release.
     if (drag?.preview) return [Math.max(first, drag.preview[0]), Math.min(last, drag.preview[1])];
-    const end = state.end == null ? last : Math.max(first, Math.min(last, state.end));
-    return [state.duration == null ? first : Math.max(first, end - state.duration), end];
+    // The start counts back from the stored end, so a frozen window does not
+    // shift when newer runs arrive; both are then kept to the data.
+    const end = state.end ?? last;
+    const start = state.duration == null ? first : Math.max(first, end - state.duration);
+    return [Math.min(start, last), Math.max(first, Math.min(last, end))];
   }
 
   // The first and last runs a window shows. A window narrower than the gap
@@ -864,8 +865,10 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    // A pinned run that has left the data is unpinned.
-    if (pinnedIndex() == null) state.pinned = null;
+    // A pinned run that has left the data is unpinned, and so is the latest
+    // run in a live window, which means following new runs (see pinTime).
+    const p = pinnedIndex();
+    if (p == null || (state.end == null && p === snapshots.length - 1)) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -901,6 +904,9 @@ footer b { color: var(--ink); font-weight: 600; }
     // A live region: rewriting unchanged text would be announced again.
     const endText = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
     if ($('range-end').textContent !== endText) $('range-end').textContent = endText;
+    // A live region only once it has a window to describe, so the first text
+    // is not announced as a change.
+    $('range-end').setAttribute('aria-live', 'polite');
     $('range-freeze').textContent = live ? 'Freeze' : 'Go live';
     $('range-freeze').title = live ? 'Stop the window following new runs: hold it at the latest run'
       : 'Let the window follow new runs again';
@@ -1193,6 +1199,11 @@ footer b { color: var(--ink); font-weight: 600; }
     else if (drag.moved) drag.preview = selection.map((px) => +mini.x.invert(px));
     // A drag that changed nothing leaves the window as it was, with little to
     // redraw unless data or a resize arrived meanwhile.
+    endDrag();
+  }
+
+  // On release, or when the release went missing.
+  function endDrag() {
     if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
       const { moved } = drag;
       drag = null;
@@ -1214,6 +1225,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // dragged window. Returns whether the window changed.
   function settleDrag() {
     if (drag.collapsed || (drag.fresh && !drag.moved)) {
+      if (state.duration === null) return false; // already all history
       setWindow(null, state.end);
       return true;
     }
@@ -1623,10 +1635,7 @@ footer b { color: var(--ink); font-weight: 600; }
       if (!drag?.byMouse) return;
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
-      if (drag) {
-        settleDrag();
-        finishDrag();
-      }
+      if (drag) endDrag();
     };
     // d3 sees a pen as a mouse, too.
     const mouseLike = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
