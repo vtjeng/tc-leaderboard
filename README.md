@@ -58,9 +58,9 @@ the address bar, so a copied link reproduces the view:
 
 - `as_of`: the standings as of this time (UTC, to the minute): the last run at
   or before it, held as new runs arrive. Absent, the standings follow the
-  latest run. With nothing pinned, Freeze fills it in with the window's end,
-  and Go live clears that again; a run the reader pinned stays. It need not be
-  inside the chart window.
+  latest run. A window dragged back from the latest run fills it in with the
+  window's end, and one made live again clears it; a run the reader picked
+  stays. It need not be inside the chart window.
 - `duration`: the chart window's length, such as `7d`, `36h`, `3d4h13m` or
   `all` (absent: `30d`).
 - `utc_end`: where the window ends (absent: live, ending at the latest run).
