@@ -650,19 +650,19 @@ footer b { color: var(--ink); font-weight: 600; }
     save();
     writeUrl();
   }
-  // A view opened from a link, as it would be saved: the reader's own saved
-  // view is kept until they change the link's (a click that changes nothing
-  // does not count).
-  let linkView = null;
+  // The view as saved. A tab saves only a view that differs from the one it
+  // last loaded or saved, so a tab where nothing changed (or nothing but the
+  // data) never overwrites a newer view saved in another tab.
+  // So a view opened from a link is saved only once the reader changes it,
+  // keeping their own saved view until then.
+  let lastForm = null;
   const savedForm = () => JSON.stringify({
     v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
   });
   function save() {
     const form = savedForm();
-    if (linkView != null) {
-      if (form === linkView) return;
-      linkView = null;
-    }
+    if (form === lastForm) return;
+    lastForm = form;
     try {
       localStorage.setItem(STORE_KEY, form);
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
@@ -1267,8 +1267,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // On release, or when the release went missing.
   function endDrag() {
-    const changed = settleDrag();
-    if (!changed && !pendingSnapshots && !redrawAfterDrag) {
+    if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
       const { moved } = drag;
       drag = null;
       if (moved) {
@@ -1284,7 +1283,7 @@ footer b { color: var(--ink); font-weight: 600; }
       else writeUrl();
       return;
     }
-    finishDrag(changed);
+    finishDrag();
   }
 
   // How a drag ends, on release or when its release went missing: a collapsed
@@ -1307,23 +1306,18 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // The drag is over: everything is redrawn, which also catches up on a
   // resize and data that arrived during it.
-  function finishDrag(changed = true) {
+  function finishDrag() {
     hideHover();
     drag = null;
-    const wanted = changed || commitAfterDrag;
     commitAfterDrag = false; // commit() below covers it
     redrawAfterDrag = false;
-    let dropped = false;
     if (pendingSnapshots) {
-      dropped = setSnapshots(pendingSnapshots);
+      setSnapshots(pendingSnapshots);
       pendingSnapshots = null;
       renderLatestRun();
     }
     renderAll();
-    // A press that changed nothing saves only a team the new data dropped,
-    // as a refresh does.
-    if (wanted || dropped) commit();
-    else writeUrl(); // (the pinned run may have left the data)
+    commit(); // (saves only a changed view)
   }
 
   function nearestIndex(px) {
@@ -1767,19 +1761,16 @@ footer b { color: var(--ink); font-weight: 600; }
     }));
   }
 
-  // Returns whether a highlighted team was dropped.
   function setSnapshots(next) {
     snapshots = next;
     knownTeams = new Set();
     next.forEach((s) => s.byTeam.forEach((_, team) => knownTeams.add(team)));
     // A highlighted team that has left the data would hold a colour and
-    // draw nothing. Dropping it is not the reader changing a link's view
-    // (though a change they made meanwhile still is).
-    const untouched = linkView != null && savedForm() === linkView;
-    const before = state.highlight.size;
+    // draw nothing. Dropping it is not a change to save (loading drops it
+    // too), though a change the reader made meanwhile still is.
+    const untouched = lastForm != null && savedForm() === lastForm;
     state.highlight.forEach((_, team) => { if (!knownTeams.has(team)) state.highlight.delete(team); });
-    if (untouched) linkView = savedForm();
-    return state.highlight.size < before;
+    if (untouched) lastForm = savedForm();
   }
 
   function renderLatestRun() {
@@ -1793,21 +1784,16 @@ footer b { color: var(--ink); font-weight: 600; }
   async function refresh() {
     try {
       const next = await loadSnapshots();
-      pendingSnapshots = null;
+      // (Data waiting on a drag stays unless newer replaces it.)
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         if (drag) {
           // Redrawing the overview would cut a drag short; it waits for the end.
           pendingSnapshots = next;
         } else {
-          const pinned = state.pinned;
-          const dropped = setSnapshots(next);
+          setSnapshots(next);
           hideHover();
           renderAll();
-          // Saving only what changed: an unchanged view saved hourly would
-          // overwrite a newer one saved in another tab. (A pinned run that
-          // left the data is not saved, but the address bar says so.)
-          if (dropped) commit();
-          else if (state.pinned !== pinned) writeUrl();
+          writeUrl(); // a team or pinned run may have left the data
         }
       }
     } catch {
@@ -1838,7 +1824,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // standings (see setWindow). A link says for itself, with as_of.
     if (!linked && state.end != null) state.pinned = 'end';
     renderAll();
-    if (linked) linkView = savedForm();
+    lastForm = savedForm(); // as loaded (from the link, or the saved view)
     writeUrl();
     setControlsEnabled(true);
     setInterval(refresh, REFRESH_MS);
