@@ -179,7 +179,11 @@ body.loading .controls { cursor: progress; }
   line-height: 1.5;
   cursor: pointer;
 }
-.select-wrap select:hover { background: var(--wash); }
+/* The open list is painted from the select's background colour, which must
+   stay opaque: a translucent hover colour showed it light in dark mode until
+   the pointer left the select. The hover wash goes on top as an image. */
+.select-wrap select:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
+.select-wrap option { background: var(--surface); color: var(--ink); }
 .select-wrap select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 
 .card {
