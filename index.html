@@ -1028,7 +1028,12 @@ footer b { color: var(--ink); font-weight: 600; }
     };
     parts.brush = d3.brushX()
       .handleSize(14)
-      .on('start brush end', (e) => { decorate(e.selection); onBrush(e); });
+      .on('start brush end', (e) => {
+        // The reader's own steps are drawn once onBrush accepts them as a
+        // drag, so a click or a jitter does not move the lens.
+        if (!e.sourceEvent) decorate(e.selection);
+        onBrush(e);
+      });
     parts.brushG = g.append('g').attr('class', 'brush').call(parts.brush);
     // Grips on both edges (resize); the window itself shows a grab cursor
     // (move). The grips sit on top of d3's own handles and ignore the pointer,
@@ -1036,6 +1041,7 @@ footer b { color: var(--ink); font-weight: 600; }
     parts.grips = parts.brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
     parts.grips.append('rect').attr('x', -4).attr('width', 8).attr('rx', 3);
     parts.grips.selectAll('line').data([-1.5, 1.5]).join('line').attr('x1', (d) => d).attr('x2', (d) => d);
+    parts.decorate = (sel) => decorate(sel);
     function decorate(sel) {
       const { W, margin, top, bottom } = parts.dims;
       const [a, b] = sel ?? [margin.left, margin.left];
@@ -1093,7 +1099,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
     // A programmatic move has no sourceEvent, so onBrush ignores it. A drag
     // under way owns the selection; its end redraws.
-    mini = { x, moveTo: (t0, t1) => brushG.call(brush.move, [x(t0), x(t1)]) };
+    mini = { x, moveTo: (t0, t1) => brushG.call(brush.move, [x(t0), x(t1)]), decorate: miniParts.decorate };
     if (!drag) mini.moveTo(view.t0, view.t1);
   }
 
@@ -1130,6 +1136,7 @@ footer b { color: var(--ink); font-weight: 600; }
         && Math.abs(drag.start[0] - selection[0]) < CLICK_SLOP_PX && Math.abs(drag.start[1] - selection[1]) < CLICK_SLOP_PX;
       if (empty || jitter) return;
       drag.moved = true;
+      mini.decorate(selection);
       const [t0, t1] = selection.map((px) => +mini.x.invert(px));
       setWindow(t1 - t0, t1);
       hideHover();
@@ -1515,7 +1522,10 @@ footer b { color: var(--ink); font-weight: 600; }
       const end = view.i0 + view.visible.length - 1;
       if (e.key === 'Escape') {
         // Back to the latest run; with nothing pinned there is nothing to do.
-        if (state.pinned == null) return;
+        if (state.pinned == null) {
+          hideHover();
+          return;
+        }
         e.preventDefault();
         pin(null);
         if (last <= end) showHover(last - view.i0);
@@ -1553,8 +1563,10 @@ footer b { color: var(--ink); font-weight: 600; }
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
       if (drag) finishDrag();
     });
-    window.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse') abandon(); });
-    window.addEventListener('pointermove', (e) => { if (drag?.byMouse && e.pointerType === 'mouse' && e.buttons === 0) abandon(); });
+    // d3 sees a pen as a mouse, too.
+    const mouseLike = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
+    window.addEventListener('pointerup', (e) => { if (mouseLike(e)) abandon(); });
+    window.addEventListener('pointermove', (e) => { if (drag?.byMouse && mouseLike(e) && e.buttons === 0) abandon(); });
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
@@ -1605,6 +1617,7 @@ footer b { color: var(--ink); font-weight: 600; }
   async function refresh() {
     try {
       const next = await loadSnapshots();
+      pendingSnapshots = null;
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
         if (drag) {
           // Redrawing the overview would cut a drag short; it waits for the end.
@@ -1626,6 +1639,7 @@ footer b { color: var(--ink); font-weight: 600; }
     wire();
     try {
       setSnapshots(await loadSnapshots());
+      if (!snapshots.length) throw new Error('no scoring runs since the rules change');
     } catch (err) {
       $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
       document.body.classList.replace('loading', 'load-failed');
