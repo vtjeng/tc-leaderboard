@@ -347,7 +347,7 @@ footer b { color: var(--ink); font-weight: 600; }
 }
 </style>
 </head>
-<body>
+<body class="loading">
 <main class="wrap">
   <div class="sentinel" id="top-sentinel"></div>
   <div class="topbar" id="topbar">
@@ -355,9 +355,9 @@ footer b { color: var(--ink); font-weight: 600; }
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
       <span class="seg-label" id="l-pool">Pool</span>
       <div class="opts">
-        <label><input type="radio" name="pool" id="pool-combined" value="combined"><span>Combined</span></label>
-        <label><input type="radio" name="pool" id="pool-pub" value="pub"><span>Public</span></label>
-        <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
+        <label><input type="radio" disabled name="pool" id="pool-combined" value="combined"><span>Combined</span></label>
+        <label><input type="radio" disabled name="pool" id="pool-pub" value="pub"><span>Public</span></label>
+        <label><input type="radio" disabled name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
     </div>
   </div>
@@ -371,19 +371,19 @@ footer b { color: var(--ink); font-weight: 600; }
       <div class="seg" role="radiogroup" aria-labelledby="l-metric">
         <span class="seg-label" id="l-metric">Metric</span>
         <div class="opts">
-          <label><input type="radio" name="metric" id="metric-points" value="points"><span>Points</span></label>
-          <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
-          <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
-          <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
-          <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
-          <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-points" value="points"><span>Points</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
         </div>
       </div>
       <div class="seg seg-range">
         <label class="seg-label" for="range">Range</label>
         <div class="range-row">
           <span class="select-wrap">
-            <select id="range">
+            <select id="range" disabled>
               <option value="all">All</option>
               <option value="d90">Last 90 days</option>
               <option value="d30">Last 30 days</option>
@@ -391,7 +391,7 @@ footer b { color: var(--ink); font-weight: 600; }
             </select>
           </span>
           <span class="range-end" id="range-end" aria-live="polite"></span>
-          <button type="button" class="btn" id="range-freeze"></button>
+          <button type="button" class="btn" id="range-freeze" disabled></button>
         </div>
       </div>
     </div>
@@ -1113,11 +1113,11 @@ footer b { color: var(--ink); font-weight: 600; }
   function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
-      // A press on the strip outside the window starts a fresh selection. A
-      // move of the whole window or a fresh selection can be a click in
-      // disguise; a resize by a pixel or two is deliberate.
-      // (d3 also starts one for a Cmd-press inside the window.)
-      const fresh = Boolean(sourceEvent.metaKey || sourceEvent.target?.classList?.contains('overlay'));
+      // A press outside the window (or a Cmd-press inside it) starts a fresh
+      // selection, which d3 begins at exactly zero width; a window, however
+      // narrow, never is. A move of the whole window or a fresh selection can
+      // be a click in disguise; a resize by a pixel or two is deliberate.
+      const fresh = Boolean(selection) && selection[0] === selection[1];
       drag = {
         start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
         fresh,
@@ -1135,7 +1135,12 @@ footer b { color: var(--ink); font-weight: 600; }
       // Nor is a click's (or a finger tap's) jitter of a few pixels.
       const jitter = !drag.moved && drag.start
         && Math.abs(drag.start[0] - selection[0]) < CLICK_SLOP_PX && Math.abs(drag.start[1] - selection[1]) < CLICK_SLOP_PX;
-      if (empty || jitter) return;
+      if (empty || jitter) {
+        // A drag shrunk back to nothing shows its lens collapsing; release
+        // clears the window.
+        if (empty && drag.moved) mini.decorate(selection);
+        return;
+      }
       drag.moved = true;
       mini.decorate(selection);
       const [t0, t1] = selection.map((px) => +mini.x.invert(px));
@@ -1469,7 +1474,8 @@ footer b { color: var(--ink); font-weight: 600; }
     writeUrl();
   }
 
-  // The controls wait for the data: until then the link or saved view has
+  // The controls wait for the data (the HTML starts them disabled): until
+  // then the link or saved view has
   // not been applied, and a change would be lost.
   function setControlsEnabled(on) {
     document.body.classList.toggle('loading', !on);
@@ -1477,7 +1483,6 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function wire() {
-    setControlsEnabled(false);
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
         state[el.name] = el.value;
@@ -1633,7 +1638,7 @@ footer b { color: var(--ink); font-weight: 600; }
           setSnapshots(next);
           hideHover();
           renderAll();
-          writeUrl();
+          commit(); // setSnapshots may have dropped a team that left the data
         }
       }
     } catch {
