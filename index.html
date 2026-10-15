@@ -208,6 +208,9 @@ body.loading .controls { cursor: progress; }
   background: var(--bg); color: var(--ink); font: inherit;
 }
 .range-pop input[type="datetime-local"] { width: auto; color-scheme: inherit; }
+/* WebKit draws a date input's fields itself, in its own font. */
+.range-pop input[type="datetime-local"]::-webkit-datetime-edit,
+.range-pop input[type="datetime-local"]::-webkit-datetime-edit-fields-wrapper { font-family: var(--font-body); font-size: inherit; }
 .range-pop input[aria-invalid="true"] { border-color: var(--bad); }
 .range-hint { max-width: 14rem; margin: 0.15rem 0.5rem 0.2rem; font-size: var(--step--2); color: var(--muted); white-space: normal; }
 .range-pop:has(input[aria-invalid="true"]) .range-hint { color: var(--bad); }
@@ -416,7 +419,7 @@ footer b { color: var(--ink); font-weight: 600; }
               </fieldset>
               <fieldset class="range-group">
                 <legend class="range-legend">Ending at</legend>
-                <label><input type="radio" name="range-end" value="live"><span>The latest run, following new ones</span></label>
+                <label><input type="radio" name="range-end" value="live"><span>Now</span></label>
                 <label><input type="radio" name="range-end" value="fixed" id="range-end-pick"><span>Fixed</span>
                   <input type="datetime-local" id="range-end-at" step="60" aria-label="Window end"></label>
               </fieldset>
