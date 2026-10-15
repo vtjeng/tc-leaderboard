@@ -534,8 +534,9 @@ footer b { color: var(--ink); font-weight: 600; }
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // the overview's elements and current scale, once drawn
-  // pinned is the time (epoch ms) of the run the standings show, or null for
-  // the latest run.
+  // pinned is the run the standings show (see pinnedIndex): a run's time
+  // (epoch ms), 'end' for a frozen window's last run, or null to follow new
+  // runs.
   // The chart window is duration ms long (null: all history) and ends at end
   // (epoch ms), or at the latest run when end is null, so it follows new runs.
   // The pinned run need not be inside it.
@@ -856,7 +857,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     if (state.pinned == null && moved) state.pinned = 'end';
     // A pin already on the window's last run is the window's, too.
-    else if (typeof state.pinned === 'number' && pinnedIndex() === runAsOf(end)) state.pinned = 'end';
+    else if (typeof state.pinned === 'number') state.pinned = pinFor(pinnedIndex());
   }
 
   function currentWindow() {
