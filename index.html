@@ -592,10 +592,9 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   // state.pinned is the pinned run's time, so it names the same run however
-  // the list of runs changes. In a live window, pinning the latest run is
-  // pinning nothing, so the standings follow new runs; a frozen window holds
-  // the run itself.
-  const pinTime = (i) => (i == null || i < 0 || (i >= snapshots.length - 1 && state.end == null) ? null : +snapshots[i].t);
+  // the list of runs changes. A pinned run holds, even the latest; only no pin
+  // (Show latest, Escape) follows new runs.
+  const pinTime = (i) => (i == null || i < 0 ? null : +snapshots[i].t);
   // The pinned run's index, or null when nothing is pinned or the run has left
   // the data.
   function pinnedIndex() {
@@ -655,8 +654,8 @@ footer b { color: var(--ink); font-weight: 600; }
   // with any of these parameters sets the whole view, with defaults for the
   // ones it leaves out; a bare link restores the reader's saved view instead.
   //   as_of=2026-10-14T13:46Z      the standings as of then: the last run at
-  //                                or before it (absent: the latest run,
-  //                                whichever that is when the link opens)
+  //                                or before it, held as new runs arrive
+  //                                (absent: the latest run, following them)
   //   duration=7d                  chart window length: 7d, 36h, 3d4h13m or
   //                                all (absent: 30d)
   //   utc_end=2026-10-14T19:43Z    where the window ends (absent: live, at the
@@ -890,10 +889,8 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    // A pinned run that has left the data is unpinned, and so is the latest
-    // run in a live window, which means following new runs (see pinTime).
-    const p = pinnedIndex();
-    if (p == null || (state.end == null && p === snapshots.length - 1)) state.pinned = null;
+    // A pinned run that has left the data is unpinned.
+    if (pinnedIndex() == null) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -1456,7 +1453,10 @@ footer b { color: var(--ink); font-weight: 600; }
     const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     $('st-time').textContent = fmtTime.format(snap.t);
-    $('st-latest').disabled = idx === snapshots.length - 1;
+    // Enabled while a run is pinned, even the latest: it then means following
+    // new runs again.
+    $('st-latest').disabled = state.pinned == null;
+    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null ? 'Follow new runs' : 'Show latest';
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = [state.pool];

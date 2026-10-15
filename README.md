@@ -57,8 +57,9 @@ The page remembers each reader's view in local storage and also mirrors it in
 the address bar, so a copied link reproduces the view:
 
 - `as_of`: the standings as of this time (UTC, to the minute): the last run at
-  or before it. Absent, the latest run; a frozen window always records it. It
-  need not be inside the chart window.
+  or before it, held as new runs arrive. Absent, the standings follow the
+  latest run; a frozen window always records it. It need not be inside the
+  chart window.
 - `duration`: the chart window's length, such as `7d`, `36h`, `3d4h13m` or
   `all` (absent: `30d`).
 - `utc_end`: where the window ends (absent: live, ending at the latest run).
