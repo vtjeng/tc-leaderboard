@@ -616,7 +616,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // chart window.
   function applyLink(linked) {
     const named = applyView(linked);
-    state.pinned = pinTime(findRun(linked.asOf));
+    state.pinned = pinTime(runAsOf(linked.asOf));
     return named;
   }
 
@@ -633,6 +633,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // A view opened from a link is saved only once the reader changes it.
   let viewFromLink = false;
   function save() {
+    if (viewFromLink) return; // a link's view is saved once the reader changes it
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
         v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
@@ -643,8 +644,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // The address bar mirrors the view, so a copied link reproduces it. A link
   // with any of these parameters sets the whole view, with defaults for the
   // ones it leaves out; a bare link restores the reader's saved view instead.
-  //   as_of=2026-10-14T13:45Z      run the standings show (absent: the latest
-  //                                run, whichever that is when the link opens)
+  //   as_of=2026-10-14T13:46Z      the standings as of then: the last run at
+  //                                or before it (absent: the latest run,
+  //                                whichever that is when the link opens)
   //   duration=7d                  chart window length: 7d, 36h, 3d4h13m or
   //                                all (absent: 30d)
   //   utc_end=2026-10-14T19:43Z    where the window ends (absent: live, at the
@@ -664,26 +666,26 @@ footer b { color: var(--ink); font-weight: 600; }
   const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir'];
   const isoMinute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
-  // UTC. A typed '+' offset arrives as a space, and a space may separate the
-  // date from the time.
+  // UTC. An offset may be +05, -0500 or +05:30 (Date.parse wants the last
+  // form), a typed '+' arrives as a space, and a space may separate the date
+  // from the time.
   const TIME = String.raw`\d\d:\d\d(?::\d\d(?:\.\d+)?)?`;
-  const SPACED_OFFSET = new RegExp(String.raw`(${TIME}) (\d\d)(?::?(\d\d))?$`);
+  const OFFSET = new RegExp(String.raw`(${TIME}) ?([+ -])(\d\d)(?::?(\d\d))?$`);
   const SPACED_TIME = new RegExp(String.raw`^(\d{4}-\d\d-\d\d) (${TIME})`);
   const NO_ZONE = new RegExp(`T${TIME}$`);
-  const COMPACT_OFFSET = new RegExp(String.raw`(${TIME})([+-]\d\d)(\d\d)$`);
   function parseUtc(v) {
     // Date.parse takes almost anything ("2" is 2001); links use ISO dates.
     if (typeof v !== 'string' || !/^\s*\d{4}-\d\d-\d\d/.test(v)) return NaN;
-    const s = v.trim().toUpperCase().replace(SPACED_OFFSET, (_, t, h, m) => `${t}+${h}:${m ?? '00'}`).replace(COMPACT_OFFSET, '$1$2:$3')
+    const s = v.trim().toUpperCase()
+      .replace(OFFSET, (_, t, sign, h, m) => `${t}${sign === '-' ? '-' : '+'}${h}:${m ?? '00'}`)
       .replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }
-  // Links name runs to the minute; runs are hours apart. Returns the index of
-  // the run within a minute of ms, or -1.
-  function findRun(ms) {
-    if (!Number.isFinite(ms)) return -1;
-    const i = byTime.center(snapshots, ms);
-    return Math.abs(+snapshots[i].t - ms) < MINUTE_MS ? i : -1;
+  // The standings as of a time are the last run at or before it (-1: before
+  // every run). A link names its run rounded up to the minute, and runs are
+  // hours apart, so it reopens on the same run.
+  function runAsOf(ms) {
+    return Number.isFinite(ms) ? byTime.right(snapshots, ms) - 1 : -1;
   }
   // duration=3d4h13m (or 7d, 36h, all); null is all history, undefined is
   // not a duration.
@@ -699,7 +701,8 @@ footer b { color: var(--ink); font-weight: 600; }
   const POOL_URL = { combined: 'combined', pub: 'public', held: 'holdout' };
   const POOL_FROM_URL = Object.fromEntries(Object.entries(POOL_URL).map(([k, v]) => [v, k]));
   const sortToUrl = (key) => key.replace(/-(\w+)$/, (_, pool) => '-' + (POOL_URL[pool] ?? pool));
-  const sortFromUrl = (key) => key.replace(/-(\w+)$/, (_, pool) => '-' + (POOL_FROM_URL[pool] ?? pool));
+  const poolFromUrl = (v) => (hasOwn(POOL_FROM_URL, v) ? POOL_FROM_URL[v] : v);
+  const sortFromUrl = (key) => key.replace(/-(\w+)$/, (_, pool) => '-' + poolFromUrl(pool));
   // Within teams, commas separate slots; a comma or percent sign in a team
   // name is escaped so the name still round-trips.
   const escapeTeam = (team) => team.replace(/[%,]/g, (c) => (c === '%' ? '%25' : '%2C'));
@@ -712,13 +715,13 @@ footer b { color: var(--ink); font-weight: 600; }
     const word = (k) => params.get(k)?.toLowerCase();
     // The CSV's own pool names (pub, held) are accepted too, as in sort.
     const pool = word('pool');
-    const linked = { metric: word('metric'), pool: POOL_FROM_URL[pool] ?? pool, asOf: parseUtc(params.get('as_of')) };
+    const linked = { metric: word('metric'), pool: poolFromUrl(pool), asOf: parseUtc(params.get('as_of')) };
     if (params.has('duration')) linked.duration = parseDuration(word('duration'));
     if (params.has('utc_end')) linked.end = parseUtc(params.get('utc_end'));
     const key = word('sort');
     const dir = word('dir');
     // dir alone applies to the default order.
-    const sortKeyed = key ? sortFromUrl(key) : DEFAULTS.sort.key;
+    const sortKeyed = key && parseSortKey(sortFromUrl(key)) ? sortFromUrl(key) : DEFAULTS.sort.key;
     if (key || dir) linked.sort = { key: sortKeyed, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(sortKeyed) };
     if (params.has('teams')) {
       const seen = new Set();
@@ -762,7 +765,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!view) return;
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
-    if (state.pinned != null) put('as_of', isoMinute(state.pinned));
+    if (state.pinned != null) put('as_of', isoMinute(ceilMinute(state.pinned)));
     if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
     if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
@@ -1211,7 +1214,8 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // On release, or when the release went missing.
   function endDrag() {
-    if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
+    const changed = settleDrag();
+    if (!changed && !pendingSnapshots && !redrawAfterDrag) {
       const { moved } = drag;
       drag = null;
       if (moved) {
@@ -1223,7 +1227,7 @@ footer b { color: var(--ink); font-weight: 600; }
       writeUrl(); // a write that waited for the drag (a pin, say)
       return;
     }
-    finishDrag();
+    finishDrag(changed);
   }
 
   // How a drag ends, on release or when its release went missing: a collapsed
@@ -1245,8 +1249,9 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   // The drag is over: everything is redrawn, which also catches up on a
-  // resize and data that arrived during it.
-  function finishDrag() {
+  // resize and data that arrived during it. Only a drag that changed the
+  // window is the reader's change (see viewFromLink).
+  function finishDrag(changed = true) {
     hideHover();
     drag = null;
     redrawAfterDrag = false;
@@ -1256,7 +1261,12 @@ footer b { color: var(--ink); font-weight: 600; }
       renderLatestRun();
     }
     renderAll();
-    commit();
+    if (changed) {
+      commit();
+    } else {
+      save();
+      writeUrl();
+    }
   }
 
   function nearestIndex(px) {
@@ -1715,7 +1725,7 @@ footer b { color: var(--ink); font-weight: 600; }
           hideHover();
           renderAll();
           // setSnapshots may have dropped a team that left the data.
-          if (!viewFromLink) save();
+          save();
           writeUrl();
         }
       }
