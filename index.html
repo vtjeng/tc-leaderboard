@@ -789,8 +789,10 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!view) return;
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
+    // A frozen window's own pin is written as its end, which names the same
+    // run here and stays the window's in data with a later run before the end.
     const pinnedAt = pinnedIndex();
-    if (pinnedAt != null) put('as_of', isoMinute(ceilMinute(+snapshots[pinnedAt].t)));
+    if (pinnedAt != null) put('as_of', isoMinute(ceilMinute(state.pinned === 'end' ? state.end : +snapshots[pinnedAt].t)));
     if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
     if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
@@ -1261,8 +1263,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // On release, or when the release went missing.
   function endDrag() {
-    const changed = settleDrag();
-    if (!changed && !pendingSnapshots && !redrawAfterDrag) {
+    if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
       const { moved } = drag;
       drag = null;
       if (moved) {
@@ -1755,14 +1756,19 @@ footer b { color: var(--ink); font-weight: 600; }
     }));
   }
 
+  // Returns whether a highlighted team was dropped.
   function setSnapshots(next) {
     snapshots = next;
     knownTeams = new Set();
     next.forEach((s) => s.byTeam.forEach((_, team) => knownTeams.add(team)));
     // A highlighted team that has left the data would hold a colour and
-    // draw nothing. Dropping it is not the reader changing a link's view.
+    // draw nothing. Dropping it is not the reader changing a link's view
+    // (though a change they made meanwhile still is).
+    const untouched = linkView != null && savedForm() === linkView;
+    const before = state.highlight.size;
     state.highlight.forEach((_, team) => { if (!knownTeams.has(team)) state.highlight.delete(team); });
-    if (linkView != null) linkView = savedForm();
+    if (untouched) linkView = savedForm();
+    return state.highlight.size < before;
   }
 
   function renderLatestRun() {
@@ -1782,10 +1788,12 @@ footer b { color: var(--ink); font-weight: 600; }
           // Redrawing the overview would cut a drag short; it waits for the end.
           pendingSnapshots = next;
         } else {
-          setSnapshots(next);
+          const dropped = setSnapshots(next);
           hideHover();
           renderAll();
-          commit();
+          // Saving only what changed: an unchanged view saved hourly would
+          // overwrite a newer one saved in another tab.
+          if (dropped) commit();
         }
       }
     } catch {
