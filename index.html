@@ -810,6 +810,8 @@ footer b { color: var(--ink); font-weight: 600; }
   function setWindow(duration, end = null) {
     state.duration = duration;
     state.end = end;
+    // Live, a pin on the latest run means following new runs (see pinTime).
+    if (end == null && state.pinned != null && pinnedIndex() === snapshots.length - 1) state.pinned = null;
   }
 
   function currentWindow() {
@@ -835,15 +837,17 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // A dragged window, as stored: snapped outward to whole minutes around the
   // runs it shows (runs are hours apart, so it reopens on the same runs), and
-  // live when it reaches the latest run.
-  function setDraggedWindow(t0, t1) {
+  // live when it reaches the latest run, unless it was frozen.
+  // A frozen window stays frozen when dragged (live = false).
+  function setDraggedWindow(t0, t1, live = true) {
     const [i0, i1] = runsIn([t0, t1]);
     const last = snapshots.length - 1;
+    const end = Math.max(ceilMinute(+snapshots[i1].t), floorMinute(+snapshots[i0].t) + MINUTE_MS);
+    const start = Math.min(floorMinute(+snapshots[i0].t), end - MINUTE_MS);
+    const follow = live && i1 === last;
     // Every run is all history, which keeps them all as new ones arrive.
-    if (i0 === 0 && i1 === last) return setWindow(null);
-    const start = floorMinute(+snapshots[i0].t);
-    const end = Math.max(ceilMinute(+snapshots[i1].t), start + MINUTE_MS);
-    setWindow(end - start, i1 === last ? null : end);
+    if (i0 === 0 && i1 === last) return setWindow(null, follow ? null : end);
+    setWindow(end - start, follow ? null : end);
   }
 
   function computeView() {
@@ -886,10 +890,13 @@ footer b { color: var(--ink); font-weight: 600; }
     select.value = preset ?? 'custom';
     const live = state.end == null;
     // A frozen window is not the 'last' 30 days.
-    for (const opt of select.options) {
-      if (opt === custom) continue;
-      opt.dataset.label ??= opt.textContent;
-      opt.textContent = live ? opt.dataset.label : opt.dataset.label.replace(/^Last /, '');
+    if (select.dataset.live !== String(live)) {
+      select.dataset.live = live;
+      for (const opt of select.options) {
+        if (opt === custom) continue;
+        opt.dataset.label ??= opt.textContent;
+        opt.textContent = live ? opt.dataset.label : opt.dataset.label.replace(/^Last /, '');
+      }
     }
     // A live region: rewriting unchanged text would be announced again.
     const endText = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
@@ -1156,7 +1163,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // A fresh selection is not a window until the drag widens it, and one
     // released that narrow clears the window. (A window drawn narrower than a
     // pixel, around a run or two, can still be grabbed and moved.)
-    const empty = !selection || (drag.fresh && selection[1] - selection[0] < 1);
+    const empty = !selection || selection[0] === selection[1] || (drag.fresh && selection[1] - selection[0] < 1);
     if (type === 'brush') {
       // Nor is a click's (or a finger tap's) jitter of a few pixels.
       const jitter = !drag.moved && drag.start
@@ -1184,11 +1191,17 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     if (empty) drag.collapsed = true;
     else if (drag.moved) drag.preview = selection.map((px) => +mini.x.invert(px));
-    // A press that never moved the window leaves it as it was, with nothing to
-    // redraw unless data arrived meanwhile.
-    if (!settleDrag() && !drag.moved && !pendingSnapshots && !redrawAfterDrag) {
+    // A drag that changed nothing leaves the window as it was, with little to
+    // redraw unless data or a resize arrived meanwhile.
+    if (!settleDrag() && !pendingSnapshots && !redrawAfterDrag) {
+      const { moved } = drag;
       drag = null;
-      mini.moveTo(view.t0, view.t1); // undo a nudge within the click allowance
+      if (moved) {
+        // The chart previewed the drag; show the unchanged window again.
+        computeView();
+        renderChart();
+      }
+      mini.moveTo(view.t0, view.t1); // and undo the lens's move
       return;
     }
     finishDrag();
@@ -1207,7 +1220,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!drag.moved) return false;
     const [i0, i1] = runsIn(drag.preview);
     if (i0 === drag.runs[0] && i1 === drag.runs[1]) return false;
-    setDraggedWindow(...drag.preview);
+    setDraggedWindow(...drag.preview, state.end == null);
     return true;
   }
 
@@ -1399,7 +1412,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     $('st-time').textContent = fmtTime.format(snap.t);
-    $('st-latest').disabled = state.pinned == null;
+    $('st-latest').disabled = idx === snapshots.length - 1;
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = [state.pool];
@@ -1544,12 +1557,10 @@ footer b { color: var(--ink); font-weight: 600; }
       renderAll();
       commit();
     });
-    // Freezing ends the window at the latest run; going live lets it follow
-    // new runs.
+    // Freezing ends the window at the latest run (rounded up to the minute,
+    // as dragged windows are); going live lets it follow new runs.
     $('range-freeze').addEventListener('click', () => {
-      setWindow(state.duration, state.end == null ? +snapshots[snapshots.length - 1].t : null);
-      // Live, a pin on the latest run means following new runs again.
-      if (state.end == null && pinnedIndex() === snapshots.length - 1) state.pinned = null;
+      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
       hideHover();
       renderAll();
       commit();
