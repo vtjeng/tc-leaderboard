@@ -146,6 +146,9 @@ h1 {
 .opts label:hover span { background: var(--wash); }
 .opts input:checked + span { background: var(--ink); color: var(--bg); }
 .opts input:focus-visible + span { outline: 2px solid var(--ink); outline-offset: 1px; }
+/* Dimmed until the data loads, or if it fails to. */
+body.loading .opts, body.loading .select-wrap, body.load-failed .opts, body.load-failed .select-wrap { opacity: 0.55; pointer-events: none; }
+body.loading .controls { cursor: progress; }
 .seg-range { margin-left: auto; }
 .sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
@@ -174,7 +177,11 @@ h1 {
   line-height: 1.5;
   cursor: pointer;
 }
-.select-wrap select:hover { background: var(--wash); }
+/* The open list is painted from the select's background colour, which must
+   stay opaque: a translucent hover colour showed it light in dark mode until
+   the pointer left the select. The hover wash goes on top as an image. */
+.select-wrap select:hover { background-image: linear-gradient(var(--wash), var(--wash)); }
+.select-wrap option { background: var(--surface); color: var(--ink); }
 .select-wrap select:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 
 .card {
@@ -342,7 +349,7 @@ footer b { color: var(--ink); font-weight: 600; }
 }
 </style>
 </head>
-<body>
+<body class="loading">
 <main class="wrap">
   <div class="sentinel" id="top-sentinel"></div>
   <div class="topbar" id="topbar">
@@ -350,9 +357,9 @@ footer b { color: var(--ink); font-weight: 600; }
     <div class="seg" role="radiogroup" aria-labelledby="l-pool" id="pool-seg">
       <span class="seg-label" id="l-pool">Pool</span>
       <div class="opts">
-        <label><input type="radio" name="pool" id="pool-combined" value="combined"><span>Combined</span></label>
-        <label><input type="radio" name="pool" id="pool-pub" value="pub"><span>Public</span></label>
-        <label><input type="radio" name="pool" id="pool-held" value="held"><span>Held-out</span></label>
+        <label><input type="radio" disabled name="pool" id="pool-combined" value="combined"><span>Combined</span></label>
+        <label><input type="radio" disabled name="pool" id="pool-pub" value="pub"><span>Public</span></label>
+        <label><input type="radio" disabled name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
     </div>
   </div>
@@ -366,23 +373,22 @@ footer b { color: var(--ink); font-weight: 600; }
       <div class="seg" role="radiogroup" aria-labelledby="l-metric">
         <span class="seg-label" id="l-metric">Metric</span>
         <div class="opts">
-          <label><input type="radio" name="metric" id="metric-points" value="points"><span>Points</span></label>
-          <label><input type="radio" name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
-          <label><input type="radio" name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
-          <label><input type="radio" name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
-          <label><input type="radio" name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
-          <label><input type="radio" name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-points" value="points"><span>Points</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-prng" value="prng"><span>PRNG</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-sessions" value="sessions"><span>Sessions</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
+          <label><input type="radio" disabled name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
         </div>
       </div>
       <div class="seg seg-range">
         <label class="seg-label" for="range">Range</label>
         <span class="select-wrap">
-          <select id="range">
+          <select id="range" disabled>
             <option value="all">All</option>
             <option value="d90">Last 90 days</option>
             <option value="d30">Last 30 days</option>
             <option value="d7">Last 7 days</option>
-            <option value="custom" hidden disabled>Custom</option>
           </select>
         </span>
       </div>
@@ -447,6 +453,9 @@ footer b { color: var(--ink); font-weight: 600; }
   const MAX_HIGHLIGHT = 8;
   const DEFAULT_HIGHLIGHT = 6;
   const STORE_KEY = 'tc-leaderboard-view';
+  // Version 2 saves only once the data has loaded. Version 1 could save while
+  // it loaded, so its empty team list may not be the reader's choice.
+  const STORE_VERSION = 2;
   const DAY_MS = 86400000;
 
   const fmtInt = d3.format(',');
@@ -499,6 +508,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   const $ = (id) => document.getElementById(id);
+  const byTime = d3.bisector((s) => +s.t);
   const chartEl = $('chart');
   const svg = d3.select('#svg');
   const tip = $('tip');
@@ -506,40 +516,96 @@ footer b { color: var(--ink); font-weight: 600; }
   const miniSvg = d3.select('#mini');
 
   let snapshots = [];   // [{ t: Date, byTeam: Map(team -> row) }], oldest first
+  let knownTeams = new Set(); // every team in snapshots
+  const isKnownTeam = (team) => knownTeams.has(team);
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
-  let mini = null;      // scale and brush from the last overview render
+  let mini = null;      // the overview's elements and current scale, once drawn
+  // pinned is the time (epoch ms) of the run the standings show, or null for
+  // the latest run.
   // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
   // overview window; window then holds its [start, end] in epoch ms.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const state = { range: DEFAULT_RANGE, window: null, metric: 'points', pool: 'combined', highlight: new Map(), pinned: null, sort: { key: 'points-combined', dir: 'desc' } };
 
+  // Object.hasOwn needs Safari 15.4.
+  const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
+
+  // Applies a saved view to state. highlight is [[team, slot], ...].
+  // Returns whether it named the highlighted teams (possibly none).
+  function applyView(saved) {
+    // Own keys only: a stored value could otherwise name an inherited one
+    // like toString.
+    if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
+    // A window outside the data is ignored.
+    if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
+        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
+        && saved.window[1] >= +snapshots[0].t && saved.window[0] <= +snapshots[snapshots.length - 1].t) {
+      state.range = 'custom';
+      state.window = [...saved.window];
+    }
+    if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
+    if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
+    if (saved.sort && parseSortKey(saved.sort.key) && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
+      state.sort = { key: saved.sort.key, dir: saved.sort.dir };
+    }
+    if (!Array.isArray(saved.highlight)) return false;
+    const used = new Set();
+    saved.highlight.slice(0, MAX_HIGHLIGHT).forEach((entry) => {
+      const [team, slot] = Array.isArray(entry) ? entry : [];
+      if (used.has(slot)) return;
+      // A team missing from every run would hold a colour and draw nothing.
+      if (typeof team === 'string' && Number.isInteger(slot) && slot >= 1 && slot <= MAX_HIGHLIGHT
+          && !state.highlight.has(team) && isKnownTeam(team)) {
+        state.highlight.set(team, slot);
+        used.add(slot);
+      }
+    });
+    // An empty list is a deliberate choice; a list with nothing usable is not.
+    return saved.highlight.length === 0 || state.highlight.size > 0;
+  }
+
+  // state.pinned is the pinned run's time, so it names the same run however
+  // the list of runs changes. Pinning the latest run is pinning nothing.
+  const pinTime = (i) => (i == null || i < 0 || i >= snapshots.length - 1 ? null : +snapshots[i].t);
+  // The pinned run's index, or null when nothing (or the latest run) is pinned
+  // or the run has left the data.
+  function pinnedIndex() {
+    if (state.pinned == null) return null;
+    const i = byTime.left(snapshots, state.pinned);
+    return i < snapshots.length - 1 && +snapshots[i].t === state.pinned ? i : null;
+  }
+
   function loadSaved() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
       if (!saved) return false;
-      if (saved.range in RANGE_DAYS) state.range = saved.range;
-      if (saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2) {
-        state.range = 'custom';
-        state.window = saved.window.map(Number);
-      }
-      if (saved.metric in METRICS) state.metric = saved.metric;
-      if (saved.pool in POOL_TEXT) state.pool = saved.pool;
-      if (saved.sort && typeof saved.sort.key === 'string' && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
-        state.sort = { key: saved.sort.key, dir: saved.sort.dir };
-      }
-      if (Array.isArray(saved.highlight)) {
-        saved.highlight.slice(0, MAX_HIGHLIGHT).forEach(([team, slot]) => state.highlight.set(team, slot));
-      }
-      return state.highlight.size > 0;
+      const named = applyView(saved);
+      return saved.v >= STORE_VERSION ? named : state.highlight.size > 0;
     } catch { return false; }
   }
+  // Call after the view has been recomputed.
+  function commit() {
+    // Before the data loads there is no view to save; saving the empty state
+    // would replace the reader's saved teams. Mid-drag the window is not
+    // settled; finishing the drag commits.
+    if (!view || drag) return;
+    save();
+  }
+  // The view as saved. A tab saves only a view that differs from the one it
+  // last loaded or saved, so a tab where nothing changed (or nothing but the
+  // data) never overwrites a newer view saved in another tab.
+  let lastForm = null;
+  const savedForm = () => JSON.stringify({
+    v: STORE_VERSION, range: state.range, window: state.range === 'custom' ? state.window : null, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
+  });
   function save() {
+    const form = savedForm();
+    if (form === lastForm) return;
+    lastForm = form;
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({
-        range: state.range, window: state.window, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
-      }));
+      localStorage.setItem(STORE_KEY, form);
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
   }
 
@@ -554,8 +620,13 @@ footer b { color: var(--ink); font-weight: 600; }
       while (used.has(slot)) slot += 1;
       state.highlight.set(team, slot);
     }
-    save();
     renderAll();
+    commit();
+  }
+
+  function setWindow(range, win = null) {
+    state.range = range;
+    state.window = win;
   }
 
   function currentWindow() {
@@ -571,7 +642,6 @@ footer b { color: var(--ink); font-weight: 600; }
   function computeView() {
     const metric = METRICS[state.metric];
     const [w0, w1] = currentWindow();
-    const byTime = d3.bisector((s) => +s.t);
     let i0 = byTime.left(snapshots, w0);
     let i1 = byTime.right(snapshots, w1) - 1;
     // A window narrower than the gap between two runs still shows two runs.
@@ -590,7 +660,8 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    if (state.pinned != null && (state.pinned < i0 || state.pinned > i1)) state.pinned = null;
+    const p = pinnedIndex();
+    if (p == null || p < i0 || p > i1) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -598,7 +669,19 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    $('range').value = state.range;
+    // A dragged window gets a Custom entry while it lasts. It is added and
+    // removed rather than hidden: Safari shows hidden options.
+    const select = $('range');
+    let custom = $('range-custom');
+    if (state.range === 'custom' && !custom) {
+      custom = new Option('Custom', 'custom');
+      custom.id = 'range-custom';
+      custom.disabled = true;
+      select.add(custom);
+    } else if (state.range !== 'custom' && custom) {
+      custom.remove();
+    }
+    select.value = state.range;
   }
 
   function renderLegend() {
@@ -694,7 +777,7 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('text-anchor', 'middle').text(xFormat);
 
     if (state.pinned != null) {
-      const px = x(snapshots[state.pinned].t);
+      const px = x(state.pinned);
       g.append('line')
         .attr('x1', px).attr('x2', px).attr('y1', margin.top).attr('y2', H - margin.bottom)
         .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
@@ -734,13 +817,58 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // The overview strip shares the main chart's left and right margins, so the
   // two time axes line up.
+  // The overview's elements (groups, brush, grips) are built once and then
+  // only updated, so a redraw never replaces the brush under a drag.
+  function buildMini() {
+    const g = miniSvg.append('g');
+    const parts = {
+      axis: g.append('line').style('stroke', 'var(--axis)'),
+      ticks: g.append('g'),
+      context: g.append('g'),
+      focus: g.append('g'),
+      shade: g.append('g').selectAll('rect').data(['left', 'right']).join('rect').attr('class', 'shade'),
+      dims: null,
+    };
+    parts.brush = d3.brushX()
+      .handleSize(14)
+      .on('start brush end', (e) => {
+        // The reader's own steps are drawn once onBrush accepts them as a
+        // drag, so a click or a jitter does not move the lens.
+        if (!e.sourceEvent) decorate(e.selection);
+        onBrush(e);
+      });
+    parts.brushG = g.append('g').attr('class', 'brush').call(parts.brush);
+    // Grips on both edges (resize); the window itself shows a grab cursor
+    // (move). The grips sit on top of d3's own handles and ignore the pointer,
+    // so dragging still goes to the brush underneath.
+    parts.grips = parts.brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
+    parts.grips.append('rect').attr('x', -4).attr('width', 8).attr('rx', 3);
+    parts.grips.selectAll('line').data([-1.5, 1.5]).join('line').attr('x1', (d) => d).attr('x2', (d) => d);
+    parts.decorate = decorate;
+    // A programmatic move has no sourceEvent, so onBrush ignores it.
+    parts.moveTo = (t0, t1) => parts.brushG.call(parts.brush.move, [parts.x(t0), parts.x(t1)]);
+    function decorate(sel) {
+      const { W, margin, top, bottom } = parts.dims;
+      const [a, b] = sel ?? [margin.left, margin.left];
+      parts.shade.attr('x', (d) => (d === 'left' ? margin.left : b))
+        .attr('width', (d) => Math.max(0, d === 'left' ? a - margin.left : W - margin.right - b));
+      parts.grips.style('display', sel ? null : 'none')
+        .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
+    }
+    return parts;
+  }
+
   function renderMini() {
+    mini ??= buildMini();
+    const { axis, ticks, context, focus, shade, brush, brushG, grips } = mini;
     const m = view.metric;
     const W = Math.max(280, miniEl.clientWidth);
     const H = 64;
     const margin = { top: 4, right: 14, bottom: 18, left: 52 };
+    const top = margin.top;
+    const bottom = H - margin.bottom;
+    mini.dims = { W, margin, top, bottom };
     miniSvg.attr('viewBox', `0 0 ${W} ${H}`).attr('width', W).attr('height', H);
-    miniSvg.selectAll('*').remove();
 
     const series = new Map();
     snapshots.forEach((s, i) => s.byTeam.forEach((r, team) => {
@@ -751,83 +879,117 @@ footer b { color: var(--ink); font-weight: 600; }
     let hi = 0;
     series.forEach((pts) => pts.forEach(({ v }) => { if (v != null && v > hi) hi = v; }));
     const x = d3.scaleTime().domain([snapshots[0].t, snapshots[snapshots.length - 1].t]).range([margin.left, W - margin.right]);
-    const y = d3.scaleLinear().domain(m.domain ?? [0, hi || 1]).range([H - margin.bottom, margin.top]);
+    const y = d3.scaleLinear().domain(m.domain ?? [0, hi || 1]).range([bottom, top]);
     const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v)).curve(d3.curveStepAfter);
 
-    const g = miniSvg.append('g');
-    g.append('line')
-      .attr('x1', margin.left).attr('x2', W - margin.right)
-      .attr('y1', H - margin.bottom + 0.5).attr('y2', H - margin.bottom + 0.5)
-      .style('stroke', 'var(--axis)');
+    axis.attr('x1', margin.left).attr('x2', W - margin.right).attr('y1', bottom + 0.5).attr('y2', bottom + 0.5);
     const [xInterval, xFormat] = timeTicks(x.domain()[1] - x.domain()[0], W - margin.left - margin.right);
-    g.append('g').selectAll('text').data(x.ticks(xInterval)).join('text')
+    ticks.selectAll('text').data(x.ticks(xInterval)).join('text')
       .attr('x', (d) => x(d)).attr('y', H - 4).attr('text-anchor', 'middle').text(xFormat);
     const all = [...series];
-    g.append('g').selectAll('path').data(all.filter(([team]) => !state.highlight.has(team))).join('path')
+    context.selectAll('path').data(all.filter(([team]) => !state.highlight.has(team))).join('path')
       .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
       .style('stroke', 'var(--context)').attr('stroke-width', 1);
-    g.append('g').selectAll('path').data(all.filter(([team]) => state.highlight.has(team))).join('path')
+    focus.selectAll('path').data(all.filter(([team]) => state.highlight.has(team))).join('path')
       .attr('d', ([, pts]) => gapPath(line, pts)).attr('fill', 'none')
       .style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`).attr('stroke-width', 1.25);
 
     // Dim the history outside the window so the window reads as a lens.
-    const top = margin.top;
-    const bottom = H - margin.bottom;
-    const shade = g.append('g').selectAll('rect').data(['left', 'right']).join('rect')
-      .attr('class', 'shade').attr('y', top).attr('height', bottom - top);
-
-    const brush = d3.brushX()
-      .extent([[margin.left, top], [W - margin.right, bottom]])
-      .handleSize(14)
-      .on('brush end', (e) => { decorate(e.selection); onBrush(e); });
-    const brushG = g.append('g').attr('class', 'brush').call(brush);
-
-    // Grips on both edges (resize); the window itself shows a grab cursor
-    // (move). The grips sit on top of d3's own handles and ignore the pointer,
-    // so dragging still goes to the brush underneath.
+    shade.attr('y', top).attr('height', bottom - top);
+    brush.extent([[margin.left, top], [W - margin.right, bottom]]);
+    brushG.call(brush);
     const gripH = Math.min(26, bottom - top - 6);
-    const grips = brushG.selectAll('.grip').data(['w', 'e']).join('g').attr('class', 'grip');
-    grips.append('rect').attr('x', -4).attr('y', -gripH / 2).attr('width', 8).attr('height', gripH).attr('rx', 3);
-    grips.selectAll('line').data([-1.5, 1.5]).join('line')
-      .attr('x1', (d) => d).attr('x2', (d) => d).attr('y1', -gripH / 4).attr('y2', gripH / 4);
+    grips.select('rect').attr('y', -gripH / 2).attr('height', gripH);
+    grips.selectAll('line').attr('y1', -gripH / 4).attr('y2', gripH / 4);
 
-    function decorate(sel) {
-      const [a, b] = sel ?? [margin.left, margin.left];
-      shade.attr('x', (d) => (d === 'left' ? margin.left : b))
-        .attr('width', (d) => Math.max(0, d === 'left' ? a - margin.left : W - margin.right - b));
-      grips.style('display', sel ? null : 'none')
-        .attr('transform', (d) => `translate(${d === 'w' ? a : b},${(top + bottom) / 2})`);
-    }
-    // A programmatic move has no sourceEvent, so onBrush ignores it.
-    brushG.call(brush.move, [x(view.t0), x(view.t1)]);
-    mini = { x };
+    // A drag under way owns the selection; its end redraws.
+    mini.x = x;
+    if (!drag) mini.moveTo(view.t0, view.t1);
   }
 
-  function onBrush({ selection, sourceEvent, type }) {
+
+  // A drag on the overview: the selection it began with, and whether the
+  // window has moved.
+  let drag = null;
+  const CLICK_SLOP_PX = 3;
+  let pendingSnapshots = null; // data that arrived during a drag
+  let redrawAfterDrag = false; // a resize happened during a drag
+  function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
-    hideHover();
-    if (!selection) {
-      // A click on the strip without a drag clears the window: show everything.
-      state.range = 'all';
-      state.window = null;
-      save();
-      renderAll();
+    if (type === 'start') {
+      // A press outside the window (or a Cmd-press inside it) starts a fresh
+      // selection, which d3 begins at exactly zero width; a window, however
+      // narrow, never is. A move of the whole window or a fresh selection can
+      // be a click in disguise; a resize by a pixel or two is deliberate.
+      const fresh = Boolean(selection) && selection[0] === selection[1];
+      drag = {
+        start: (mode === 'drag' || fresh) && selection ? [...selection] : null,
+        fresh,
+        moved: false,
+        byMouse: sourceEvent.type.startsWith('mouse'),
+      };
       return;
     }
-    state.range = 'custom';
-    state.window = selection.map((px) => +mini.x.invert(px));
-    computeView();
-    renderFilters();
-    renderChart();
-    if (type === 'end') {
-      save();
-      renderTable();
+    if (!drag) return;
+    // A fresh selection is not a window until the drag widens it, and one
+    // released that narrow clears the window. (A window drawn narrower than a
+    // pixel, around a run or two, can still be grabbed and moved.)
+    const empty = !selection || (drag.fresh && selection[1] - selection[0] < 1);
+    if (type === 'brush') {
+      // Nor is a click's (or a finger tap's) jitter of a few pixels.
+      const jitter = !drag.moved && drag.start
+        && Math.abs(drag.start[0] - selection[0]) < CLICK_SLOP_PX && Math.abs(drag.start[1] - selection[1]) < CLICK_SLOP_PX;
+      if (empty || jitter) {
+        // A drag shrunk back to nothing shows its lens collapsing; release
+        // clears the window.
+        if (empty && drag.moved) mini.decorate(selection);
+        return;
+      }
+      drag.moved = true;
+      mini.decorate(selection);
+      setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+      const shown = state.pinned;
+      hideHover();
+      computeView();
+      renderChart(); // the menu and end status catch up on release
+      if (state.pinned !== shown) {
+        // The window left the pinned run behind: the table shows the latest.
+        renderTable();
+      }
+      return;
     }
+    // A click outside the window (a fresh selection that never really moved)
+    // clears it: show everything. A press that never moved the window leaves
+    // it as it was, with nothing to redraw unless data arrived meanwhile.
+    // Anything else is the dragged window.
+    if (empty || (drag.fresh && !drag.moved)) setWindow('all');
+    else if (drag.moved) setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+    else if (!pendingSnapshots && !redrawAfterDrag) {
+      drag = null;
+      mini.moveTo(view.t0, view.t1); // undo a nudge within the click allowance
+      return;
+    }
+    finishDrag();
+  }
+
+  // The drag is over: everything is redrawn, which also catches up on a
+  // resize and data that arrived during it.
+  function finishDrag() {
+    hideHover();
+    drag = null;
+    redrawAfterDrag = false;
+    if (pendingSnapshots) {
+      setSnapshots(pendingSnapshots);
+      pendingSnapshots = null;
+      renderLatestRun();
+    }
+    renderAll();
+    commit(); // (saves only a changed view)
   }
 
   function nearestIndex(px) {
     const t = +chart.x.invert(px);
-    const i = d3.bisector((s) => +s.t).center(view.visible, t);
+    const i = byTime.center(view.visible, t);
     return Math.max(0, Math.min(view.visible.length - 1, i));
   }
 
@@ -905,18 +1067,26 @@ footer b { color: var(--ink); font-weight: 600; }
   // Sort keys for the table. Pooled keys follow the Pool switch: with a single
   // pool shown, a key for another pool maps onto the visible one.
   const GROUP_KEYS = new Set(TABLE_GROUPS.map((g) => g.col));
+  const PLAIN_SORT_KEYS = ['team', 'speed', 'playable'];
+  // A sort key is a plain column ('team') or '<group>-<pool>' ('prng-held').
+  // Returns { group, pool } for a pooled key, {} for a plain one, else null.
+  function parseSortKey(key) {
+    if (PLAIN_SORT_KEYS.includes(key)) return {};
+    if (typeof key !== 'string') return null;
+    const [group, pool, ...rest] = key.split('-');
+    return !rest.length && GROUP_KEYS.has(group) && hasOwn(POOL_TEXT, pool) ? { group, pool } : null;
+  }
   function sortKey(pools) {
     const { key } = state.sort;
-    const [group, pool] = key.split('-');
-    if (GROUP_KEYS.has(group) && !pools.includes(pool)) return `${group}-${pools[0]}`;
-    if (!GROUP_KEYS.has(group) && !['team', 'speed', 'playable'].includes(key)) return `points-${pools[0]}`;
-    return key;
+    const parsed = parseSortKey(key);
+    if (!parsed) return `points-${pools[0]}`;
+    return parsed.group && !pools.includes(parsed.pool) ? `${parsed.group}-${pools[0]}` : key;
   }
   function sortValue(r, key) {
     if (key === 'team') return r.team.toLowerCase();
     if (key === 'speed') return r.speed_per_move_ms;
     if (key === 'playable') return r.playable == null ? null : Number(r.playable);
-    const [group, pool] = key.split('-');
+    const { group, pool } = parseSortKey(key);
     const v = METRICS[TABLE_GROUPS.find((g) => g.col === group).metric].value(r, pool);
     return v == null || Number.isNaN(v) ? null : v;
   }
@@ -925,8 +1095,8 @@ footer b { color: var(--ink); font-weight: 600; }
   function setSort(key) {
     const current = sortKey([state.pool]);
     state.sort = { key, dir: key === current ? (state.sort.dir === 'asc' ? 'desc' : 'asc') : firstDir(key) };
-    save();
     renderTable();
+    commit();
     document.querySelector(`#thead button[data-key="${key}"]`)?.focus();
   }
 
@@ -987,7 +1157,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function renderTable() {
-    const idx = state.pinned ?? snapshots.length - 1;
+    const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     $('st-time').textContent = fmtTime.format(snap.t);
     $('st-latest').disabled = state.pinned == null;
@@ -1105,26 +1275,33 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function pin(i) {
-    state.pinned = i == null || i >= snapshots.length - 1 ? null : i;
+    state.pinned = pinTime(i);
     renderChart();
     renderTable();
+  }
+
+  // The controls wait for the data (the HTML starts them disabled): until
+  // then the saved view has not been
+  // applied, and a change would be lost.
+  function setControlsEnabled(on) {
+    document.body.classList.toggle('loading', !on);
+    document.querySelectorAll('.opts input, #range').forEach((el) => { el.disabled = !on; });
   }
 
   function wire() {
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
         state[el.name] = el.value;
-        save();
         hideHover();
         renderAll();
+        commit();
       });
     });
     $('range').addEventListener('change', (e) => {
-      state.range = e.target.value;
-      state.window = null;
-      save();
+      setWindow(e.target.value);
       hideHover();
       renderAll();
+      commit();
     });
     $('st-latest').addEventListener('click', () => pin(null));
     // Shadow under the frozen title bar only once the page has scrolled.
@@ -1140,26 +1317,69 @@ footer b { color: var(--ink); font-weight: 600; }
     node.addEventListener('click', (e) => {
       if (!chart) return;
       pin(view.i0 + nearestIndex(d3.pointer(e, node)[0]));
-      showHover(nearestIndex(d3.pointer(e, node)[0]));
+      showHover((pinnedIndex() ?? snapshots.length - 1) - view.i0);
     });
     node.addEventListener('keydown', (e) => {
-      const lastVi = view.visible.length - 1;
-      let vi = (state.pinned ?? snapshots.length - 1) - view.i0;
-      if (e.key === 'ArrowLeft') vi -= 1;
-      else if (e.key === 'ArrowRight') vi += 1;
-      else if (e.key === 'Home') vi = 0;
-      else if (e.key === 'End' || e.key === 'Escape') vi = lastVi;
+      if (!view) return;
+      const last = snapshots.length - 1;
+      const end = view.i0 + view.visible.length - 1;
+      // With nothing pinned the table shows the latest run, which a dragged
+      // window may end before: the arrows then step in from its right edge.
+      const at = pinnedIndex() ?? Math.min(last, end + 1);
+      let i;
+      if (e.key === 'ArrowLeft') i = at - 1;
+      else if (e.key === 'ArrowRight') i = at + 1;
+      else if (e.key === 'Home') i = view.i0;
+      else if (e.key === 'End') i = end;
+      // Escape returns to the window's last run (the latest, unless the window
+      // was dragged); with nothing pinned there is nothing to return from.
+      else if (e.key === 'Escape') i = state.pinned == null ? null : end;
       else return;
+      if (i == null || i < view.i0 || i > end) {
+        if (e.key === 'Escape') hideHover();
+        // At the edge: show where the standings are, if that is in view.
+        if (i != null && at >= view.i0 && at <= end) {
+          e.preventDefault();
+          showHover(at - view.i0);
+        }
+        return;
+      }
       e.preventDefault();
-      vi = Math.max(0, Math.min(lastVi, vi));
-      pin(view.i0 + vi);
-      showHover(vi);
+      pin(i);
+      showHover((pinnedIndex() ?? last) - view.i0);
     });
     node.addEventListener('blur', hideHover);
+    // A mouse drag's end can go missing (a release outside the frame). One
+    // still open after the mouse is released, or while it moves with no
+    // button held, is finished here; touch gestures are left to the brush.
+    const abandon = () => {
+      if (!drag?.byMouse) return;
+      // The brush's own mouseup ends its gesture, which ends ours as usual.
+      window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
+      if (drag) finishDrag();
+    };
+    // d3 sees a pen as a mouse, too.
+    const mouseLike = (e) => e.pointerType === 'mouse' || e.pointerType === 'pen';
+    // After a release, give the brush's own mouseup its turn first.
+    window.addEventListener('pointerup', (e) => { if (mouseLike(e)) setTimeout(abandon); });
+    // A move with no button held comes before its mouse event, which would
+    // drag the window to wherever the mouse came back; end the drag first.
+    window.addEventListener('pointermove', (e) => { if (drag?.byMouse && mouseLike(e) && e.buttons === 0) abandon(); });
     let raf = 0;
     new ResizeObserver(() => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { if (view) { hideHover(); renderChart(); renderMini(); } });
+      raf = requestAnimationFrame(() => {
+        if (!view) return;
+        // Redrawing the overview mid-drag would cut the drag short; the
+        // drag's end redraws.
+        if (drag) {
+          redrawAfterDrag = true;
+          return;
+        }
+        hideHover();
+        renderChart();
+        renderMini();
+      });
     }).observe(chartEl);
   }
 
@@ -1171,11 +1391,23 @@ footer b { color: var(--ink); font-weight: 600; }
 
   async function loadSnapshots() {
     const rows = await d3.csv(CSV_URL, { cache: 'no-store' }, d3.autoType);
-    const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
-    return [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
+    const runs = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
+    return [...runs].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
       t: new Date(t),
       byTeam: new Map(rs.map((r) => [r.team, r])),
     }));
+  }
+
+  function setSnapshots(next) {
+    snapshots = next;
+    knownTeams = new Set();
+    next.forEach((s) => s.byTeam.forEach((_, team) => knownTeams.add(team)));
+    // A highlighted team that has left the data would hold a colour and
+    // draw nothing. Dropping it is not a change to save (loading drops it
+    // too), though a change the reader made meanwhile still is.
+    const untouched = lastForm != null && savedForm() === lastForm;
+    state.highlight.forEach((_, team) => { if (!knownTeams.has(team)) state.highlight.delete(team); });
+    if (untouched) lastForm = savedForm();
   }
 
   function renderLatestRun() {
@@ -1189,10 +1421,16 @@ footer b { color: var(--ink); font-weight: 600; }
   async function refresh() {
     try {
       const next = await loadSnapshots();
+      // (Data waiting on a drag stays unless newer replaces it.)
       if (+next[next.length - 1].t !== +snapshots[snapshots.length - 1].t) {
-        snapshots = next;
-        hideHover();
-        renderAll();
+        if (drag) {
+          // Redrawing the overview would cut a drag short; it waits for the end.
+          pendingSnapshots = next;
+        } else {
+          setSnapshots(next);
+          hideHover();
+          renderAll();
+        }
       }
     } catch {
       // Keep showing the data already loaded; the next tick tries again.
@@ -1203,9 +1441,11 @@ footer b { color: var(--ink); font-weight: 600; }
   async function main() {
     wire();
     try {
-      snapshots = await loadSnapshots();
+      setSnapshots(await loadSnapshots());
+      if (!snapshots.length) throw new Error('no scoring runs since the rules change');
     } catch (err) {
       $('chart-sub').textContent = `Could not load ${CSV_URL} (${err.message}). Serve this folder over HTTP, for example with python3 -m http.server.`;
+      document.body.classList.replace('loading', 'load-failed');
       return;
     }
     renderLatestRun();
@@ -1215,6 +1455,8 @@ footer b { color: var(--ink); font-weight: 600; }
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
     renderAll();
+    lastForm = savedForm(); // as loaded
+    setControlsEnabled(true);
     setInterval(refresh, REFRESH_MS);
   }
 
