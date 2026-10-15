@@ -554,7 +554,9 @@ footer b { color: var(--ink); font-weight: 600; }
     // inherited one like toString.
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
-    if (saved.duration === null || (saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) state.duration = saved.duration;
+    if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration >= MINUTE_MS && saved.duration <= 3650 * DAY_MS)) {
+      state.duration = saved.duration;
+    }
     // An end before the data would show none of it; one after the latest run
     // (saved against newer data) holds at it, rather than letting the frozen
     // window grow as runs arrive.
@@ -809,6 +811,8 @@ footer b { color: var(--ink); font-weight: 600; }
   function currentWindow() {
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
+    // Mid-drag the chart previews the dragged window; state changes on release.
+    if (drag?.preview) return [Math.max(first, drag.preview[0]), Math.min(last, drag.preview[1])];
     const end = state.end == null ? last : Math.max(first, Math.min(last, state.end));
     return [state.duration == null ? first : Math.max(first, end - state.duration), end];
   }
@@ -830,9 +834,12 @@ footer b { color: var(--ink); font-weight: 600; }
   // live when it reaches the latest run.
   function setDraggedWindow(t0, t1) {
     const [i0, i1] = runsIn([t0, t1]);
+    const last = snapshots.length - 1;
+    // Every run is all history, which keeps them all as new ones arrive.
+    if (i0 === 0 && i1 === last) return setWindow(null);
     const start = floorMinute(+snapshots[i0].t);
-    const end = ceilMinute(+snapshots[i1].t);
-    setWindow(end - start, i1 === snapshots.length - 1 ? null : end);
+    const end = Math.max(ceilMinute(+snapshots[i1].t), start + MINUTE_MS);
+    setWindow(end - start, i1 === last ? null : end);
   }
 
   function computeView() {
@@ -1152,13 +1159,16 @@ footer b { color: var(--ink); font-weight: 600; }
       if (empty || jitter) {
         // A drag shrunk back to nothing shows its lens collapsing; release
         // clears the window.
-        if (empty && drag.moved) mini.decorate(selection);
+        if (empty && drag.moved) {
+          drag.collapsed = true;
+          mini.decorate(selection);
+        }
         return;
       }
       drag.moved = true;
+      drag.collapsed = false;
+      drag.preview = selection.map((px) => +mini.x.invert(px));
       mini.decorate(selection);
-      const [t0, t1] = selection.map((px) => +mini.x.invert(px));
-      setWindow(t1 - t0, t1);
       hideHover();
       computeView();
       renderChart(); // the menu and end status catch up on release
@@ -1581,8 +1591,9 @@ footer b { color: var(--ink); font-weight: 600; }
       // The brush's own mouseup ends its gesture, which ends ours as usual.
       window.dispatchEvent(new MouseEvent('mouseup', { view: window }));
       if (drag) {
-        // Mid-drag the window is [end - duration, end], as dragged so far.
-        if (drag.moved) setDraggedWindow(state.end - state.duration, state.end);
+        // As a release there would: a collapsed drag clears the window.
+        if (drag.collapsed) setWindow(null, state.end);
+        else if (drag.preview) setDraggedWindow(...drag.preview);
         finishDrag();
       }
     };
