@@ -391,7 +391,7 @@ footer b { color: var(--ink); font-weight: 600; }
             </select>
           </span>
           <span class="range-end" id="range-end" aria-live="polite"></span>
-          <button type="button" class="btn" id="range-freeze" disabled></button>
+          <button type="button" class="btn" id="range-freeze" disabled>Freeze</button>
         </div>
       </div>
     </div>
@@ -553,18 +553,18 @@ footer b { color: var(--ink); font-weight: 600; }
     // Own keys only: a stored or linked value could otherwise name an
     // inherited one like toString.
     const first = +snapshots[0].t;
+    const last = +snapshots[snapshots.length - 1].t;
     if (saved.duration === null || (Number.isFinite(saved.duration) && saved.duration > 0)) state.duration = saved.duration;
-    // An end before the data would show none of it.
-    if (Number.isFinite(saved.end) && saved.end >= first) state.end = saved.end;
+    // An end before the data would show none of it; one after the latest run
+    // (saved against newer data) holds at it, rather than letting the frozen
+    // window grow as runs arrive.
+    if (Number.isFinite(saved.end) && saved.end >= first) state.end = Math.min(saved.end, ceilMinute(last));
     // Saves from before durations: a preset key, or a dragged window.
     if (saved.duration === undefined && hasOwn(DURATIONS, saved.range)) state.duration = DURATIONS[saved.range];
-    const last = +snapshots[snapshots.length - 1].t;
     if (saved.duration === undefined && saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
         && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
         && saved.window[1] >= first && saved.window[0] <= last) {
-      // As a dragged window does: live if it reached the latest run.
-      state.duration = saved.window[1] - saved.window[0];
-      state.end = saved.window[1] >= last ? null : saved.window[1];
+      setDraggedWindow(...saved.window); // snapped, and live if it reached the latest run
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
@@ -617,8 +617,9 @@ footer b { color: var(--ink); font-weight: 600; }
   // Call after the view has been recomputed.
   function commit() {
     // Before the data loads there is no view to save; saving the empty state
-    // would replace the reader's saved teams.
-    if (!view) return;
+    // would replace the reader's saved teams. Mid-drag the window is not
+    // settled; finishing the drag commits.
+    if (!view || drag) return;
     save();
     writeUrl();
   }
@@ -879,7 +880,9 @@ footer b { color: var(--ink); font-weight: 600; }
       opt.dataset.label ??= opt.textContent;
       opt.textContent = live ? opt.dataset.label : opt.dataset.label.replace(/^Last /, '');
     }
-    $('range-end').textContent = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
+    // A live region: rewriting unchanged text would be announced again.
+    const endText = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
+    if ($('range-end').textContent !== endText) $('range-end').textContent = endText;
     $('range-freeze').textContent = live ? 'Freeze' : 'Go live';
     $('range-freeze').title = live ? 'Stop the window following new runs: hold it at the latest run'
       : 'Let the window follow new runs again';
@@ -950,7 +953,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const shownT = state.pinned ?? +snapshots[snapshots.length - 1].t;
     const outside = shownT < +view.t0 || shownT > +view.t1;
     $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`
-      + (outside ? ` · standings at ${fmtDay.format(shownT)}, outside this window` : '');
+      + (outside ? ` · standings at ${fmtTime.format(shownT)}, outside this window` : '');
 
     const W = Math.max(280, chartEl.clientWidth);
     const H = Math.round(Math.max(260, Math.min(440, W * 0.46)));
@@ -1509,8 +1512,8 @@ footer b { color: var(--ink); font-weight: 600; }
       renderAll();
       commit();
     });
-    // Freezing ends the window at the latest run (to the minute, as a link
-    // gives it); going live lets it follow new runs.
+    // Freezing ends the window at the latest run (rounded up to the minute,
+    // as dragged windows are); going live lets it follow new runs.
     $('range-freeze').addEventListener('click', () => {
       setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
       hideHover();
