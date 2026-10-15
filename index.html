@@ -773,7 +773,10 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!view) return;
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
-    if (state.pinned != null) put('as_of', isoMinute(ceilMinute(state.pinned)));
+    // A frozen window names the run its standings show even when nothing is
+    // pinned, so the link keeps showing that run as newer ones arrive.
+    const asOf = state.pinned ?? (state.end != null ? +snapshots[snapshots.length - 1].t : null);
+    if (asOf != null) put('as_of', isoMinute(ceilMinute(asOf)));
     if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
     if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
@@ -796,9 +799,9 @@ footer b { color: var(--ink); font-weight: 600; }
     const query = [...kept, ...[...ours].map(([k, v]) => `${k}=${enc(v)}`)].join('&');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
-    urlWrites.push(Date.now());
     try {
       history.replaceState(history.state, '', url);
+      urlWrites.push(Date.now()); // only writes the browser took count
       urlFailures = 0;
     } catch {
       // Refused anyway: try again later, backing off so a page that may never
@@ -1232,7 +1235,7 @@ footer b { color: var(--ink); font-weight: 600; }
         renderChart();
       }
       mini.moveTo(view.t0, view.t1); // and undo the lens's move
-      writeUrl(); // a write that waited for the drag (a pin, say)
+      commit(); // anything that waited for the drag (a pin, a radio change)
       return;
     }
     finishDrag();
@@ -1726,7 +1729,9 @@ footer b { color: var(--ink); font-weight: 600; }
           setSnapshots(next);
           hideHover();
           renderAll();
-          // setSnapshots may have dropped a team that left the data.
+          // setSnapshots may have dropped a team that left the data; that is
+          // not the reader changing a link's view.
+          if (linkView != null) linkView = savedForm();
           commit();
         }
       }
