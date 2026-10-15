@@ -542,7 +542,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null };
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null, autoPin: false };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -621,6 +621,9 @@ footer b { color: var(--ink); font-weight: 600; }
   function applyLink(linked) {
     const named = applyView(linked);
     state.pinned = pinTime(runAsOf(linked.asOf));
+    // A frozen window's link names its last run when the page pinned it (see
+    // setWindow); that pin stays the window's, to go when it goes live.
+    state.autoPin = state.end != null && state.pinned != null && pinnedIndex() === runAsOf(state.end);
     return named;
   }
 
@@ -829,9 +832,20 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
+  // A frozen window holds its standings too: unless the reader has pinned a
+  // run, it pins the window's last run, and marks the pin as its own
+  // (autoPin) so the pin moves with the window and goes when it goes live. A
+  // pin the reader set is never touched here.
   function setWindow(duration, end = null) {
     state.duration = duration;
     state.end = end;
+    if (end != null && (state.pinned == null || state.autoPin)) {
+      state.pinned = +snapshots[runAsOf(end)].t;
+      state.autoPin = true;
+    } else if (end == null && state.autoPin) {
+      state.pinned = null;
+      state.autoPin = false;
+    }
   }
 
   function currentWindow() {
@@ -888,7 +902,10 @@ footer b { color: var(--ink); font-weight: 600; }
       }));
     });
     // A pinned run that has left the data is unpinned.
-    if (pinnedIndex() == null) state.pinned = null;
+    if (pinnedIndex() == null) {
+      state.pinned = null;
+      state.autoPin = false;
+    }
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -1454,7 +1471,9 @@ footer b { color: var(--ink); font-weight: 600; }
     // Enabled while a run is pinned, even the latest: it then means following
     // new runs again.
     $('st-latest').disabled = state.pinned == null;
-    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null ? 'Follow new runs' : 'Show latest';
+    // In a live window, unpinning the latest run means following new runs; in
+    // a frozen one it shows the latest run, but the chart stays frozen.
+    $('st-latest').textContent = idx === snapshots.length - 1 && state.pinned != null && state.end == null ? 'Follow new runs' : 'Show latest';
     // The pool switch drives the whole board: "Both" shows Total, Public and
     // Held-out under each pooled metric; a single pool shows just that pool.
     const pools = [state.pool];
@@ -1570,6 +1589,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = pinTime(i);
+    state.autoPin = false; // the reader's own pin (or none)
     renderChart();
     renderTable();
     writeUrl();
@@ -1600,18 +1620,10 @@ footer b { color: var(--ink); font-weight: 600; }
       commit();
     });
     // Freezing ends the window at the latest run (rounded up to the minute,
-    // as dragged windows are) and holds the standings there too, unless a run
-    // is already pinned. Going live lets both follow new runs: a pin on the
-    // run the window ends on (as Freeze sets it) goes; any other pin stays.
+    // as dragged windows are) and, through setWindow, holds the standings
+    // there too; going live lets both follow new runs.
     $('range-freeze').addEventListener('click', () => {
-      const last = snapshots.length - 1;
-      if (state.end == null) {
-        if (state.pinned == null) state.pinned = +snapshots[last].t;
-        setWindow(state.duration, ceilMinute(+snapshots[last].t));
-      } else {
-        if (pinnedIndex() === runAsOf(state.end)) state.pinned = null;
-        setWindow(state.duration, null);
-      }
+      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
       hideHover();
       renderAll();
       commit();
@@ -1774,8 +1786,8 @@ footer b { color: var(--ink); font-weight: 600; }
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
     // The saved view keeps no pinned run, but a frozen window holds its
-    // standings, as Freeze does. (A link says for itself, with as_of.)
-    if (!linked && state.end != null) state.pinned = +snapshots[runAsOf(state.end)].t;
+    // standings (see setWindow). A link says for itself, with as_of.
+    if (!linked && state.end != null) setWindow(state.duration, state.end);
     renderAll();
     if (linked) linkView = savedForm();
     writeUrl();
