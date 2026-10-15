@@ -411,7 +411,7 @@ footer b { color: var(--ink); font-weight: 600; }
       <li>Hover or tap the chart to read values.</li>
       <li>Click or tap a point in time to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
       <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
-      <li>A live window follows new runs as they arrive; Freeze holds it where it ends now.</li>
+      <li>A live window follows new runs as they arrive; Freeze holds the window and the standings where they are, and Go live lets both follow again.</li>
     </ul>
   </section>
 
@@ -595,6 +595,11 @@ footer b { color: var(--ink); font-weight: 600; }
   // the list of runs changes. A pinned run holds, even the latest; only no pin
   // (Show latest, Escape) follows new runs.
   const pinTime = (i) => (i == null || i < 0 ? null : +snapshots[i].t);
+  // The last run at or before a time (the earliest, if before them all; -1
+  // for no time).
+  function runAsOf(ms) {
+    return Number.isFinite(ms) ? Math.max(0, byTime.right(snapshots, ms) - 1) : -1;
+  }
   // The pinned run's index, or null when nothing is pinned or the run has left
   // the data.
   function pinnedIndex() {
@@ -690,13 +695,9 @@ footer b { color: var(--ink); font-weight: 600; }
       .replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }
-  // The standings as of a time are the last run at or before it (-1: no
-  // time). A link names its run rounded up to the minute, and runs are
+  // as_of reads with runAsOf: the standings as of a time are the last run at
+  // or before it. A link names its run rounded up to the minute, and runs are
   // hours apart, so it reopens on the same run.
-  function runAsOf(ms) {
-    // Before every run, the earliest standings are the closest there are.
-    return Number.isFinite(ms) ? Math.max(0, byTime.right(snapshots, ms) - 1) : -1;
-  }
   // duration=3d4h13m (or 7d, 36h, all); null is all history, undefined is
   // not a duration.
   function parseDuration(v) {
@@ -776,10 +777,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (!view) return;
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
-    // A frozen window names the run its standings show even when nothing is
-    // pinned, so the link keeps showing that run as newer ones arrive.
-    const asOf = state.pinned ?? (state.end != null ? +snapshots[snapshots.length - 1].t : null);
-    if (asOf != null) put('as_of', isoMinute(ceilMinute(asOf)));
+    if (state.pinned != null) put('as_of', isoMinute(ceilMinute(state.pinned)));
     if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
     if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
@@ -1602,9 +1600,18 @@ footer b { color: var(--ink); font-weight: 600; }
       commit();
     });
     // Freezing ends the window at the latest run (rounded up to the minute,
-    // as dragged windows are); going live lets it follow new runs.
+    // as dragged windows are) and holds the standings there too, unless a run
+    // is already pinned. Going live lets both follow new runs: a pin on the
+    // run the window ends on (as Freeze sets it) goes; any other pin stays.
     $('range-freeze').addEventListener('click', () => {
-      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
+      const last = snapshots.length - 1;
+      if (state.end == null) {
+        if (state.pinned == null) state.pinned = +snapshots[last].t;
+        setWindow(state.duration, ceilMinute(+snapshots[last].t));
+      } else {
+        if (pinnedIndex() === runAsOf(state.end)) state.pinned = null;
+        setWindow(state.duration, null);
+      }
       hideHover();
       renderAll();
       commit();
@@ -1766,6 +1773,9 @@ footer b { color: var(--ink); font-weight: 600; }
       latest.sort((a, b) => (pooled(b, 'combined', 'points') ?? 0) - (pooled(a, 'combined', 'points') ?? 0));
       latest.slice(0, DEFAULT_HIGHLIGHT).forEach((r, i) => state.highlight.set(r.team, i + 1));
     }
+    // The saved view keeps no pinned run, but a frozen window holds its
+    // standings, as Freeze does. (A link says for itself, with as_of.)
+    if (!linked && state.end != null) state.pinned = +snapshots[runAsOf(state.end)].t;
     renderAll();
     if (linked) linkView = savedForm();
     writeUrl();
