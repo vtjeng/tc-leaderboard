@@ -150,6 +150,8 @@ h1 {
 .opts label:has(input:disabled), .select-wrap select:disabled { opacity: 0.55; cursor: progress; }
 .opts label:has(input:disabled) span { pointer-events: none; }
 .seg-range { margin-left: auto; }
+.range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.range-end { font-size: var(--step--1); color: var(--ink-2); white-space: nowrap; }
 .sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
 .select-wrap::after {
@@ -379,14 +381,18 @@ footer b { color: var(--ink); font-weight: 600; }
       </div>
       <div class="seg seg-range">
         <label class="seg-label" for="range">Range</label>
-        <span class="select-wrap">
-          <select id="range">
-            <option value="all">All</option>
-            <option value="d90">Last 90 days</option>
-            <option value="d30">Last 30 days</option>
-            <option value="d7">Last 7 days</option>
-          </select>
-        </span>
+        <div class="range-row">
+          <span class="select-wrap">
+            <select id="range">
+              <option value="all">All</option>
+              <option value="d90">Last 90 days</option>
+              <option value="d30">Last 30 days</option>
+              <option value="d7">Last 7 days</option>
+            </select>
+          </span>
+          <span class="range-end" id="range-end" aria-live="polite"></span>
+          <button type="button" class="btn" id="range-freeze"></button>
+        </div>
       </div>
     </div>
     <div class="card-head">
@@ -405,6 +411,7 @@ footer b { color: var(--ink); font-weight: 600; }
       <li>Hover or tap the chart to read values.</li>
       <li>Click or tap a point in time to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
       <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
+      <li>A live window follows new runs as they arrive; Freeze holds it where it ends now.</li>
     </ul>
   </section>
 
@@ -485,7 +492,18 @@ footer b { color: var(--ink); font-weight: 600; }
     permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
   };
   const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
-  const RANGE_DAYS = { all: null, d90: 90, d30: 30, d7: 7 };
+  // The range menu's presets, as window durations (null: all history).
+  const DURATIONS = { all: null, d90: 90 * DAY_MS, d30: 30 * DAY_MS, d7: 7 * DAY_MS };
+  const DEFAULT_DURATION = DURATIONS.d30;
+  const MINUTE_MS = 60000;
+  const floorMinute = (ms) => Math.floor(ms / MINUTE_MS) * MINUTE_MS;
+  const ceilMinute = (ms) => Math.ceil(ms / MINUTE_MS) * MINUTE_MS;
+  // '3d 4h 13m', leaving out zero parts.
+  function fmtDuration(ms) {
+    const m = Math.round(ms / MINUTE_MS);
+    const parts = [[Math.floor(m / 1440), 'd'], [Math.floor(m / 60) % 24, 'h'], [m % 60, 'm']].filter(([n]) => n);
+    return parts.map(([n, u]) => n + u).join(' ') || '0m';
+  }
 
   // "PRNG match" stays capitalised; "Points" becomes "points" mid-sentence.
   const inSentence = (title) => (/^[A-Z]{2}/.test(title) ? title : title[0].toLowerCase() + title.slice(1));
@@ -512,19 +530,19 @@ footer b { color: var(--ink); font-weight: 600; }
 
   let snapshots = [];   // [{ t: Date, byTeam: Map(team -> row) }], oldest first
   let knownTeams = new Set(); // every team in snapshots
+  const isKnownTeam = (team) => knownTeams.has(team);
   let view = null;      // derived from state + snapshots by computeView()
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // scale and brush from the last overview render
   // pinned is the time (epoch ms) of the run the standings show, or null for
   // the latest run.
-  // range is a key of RANGE_DAYS, or 'custom' when the reader dragged the
-  // overview window. window holds a dragged window's [start, end] in epoch
-  // ms, or where a preset has slid to keep a pinned run in view (null while
-  // the preset ends at the latest run).
+  // The chart window is duration ms long (null: all history) and ends at end
+  // (epoch ms), or at the latest run when end is null, so it follows new runs.
+  // The pinned run need not be inside it.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
-  const DEFAULTS = { range: 'd30', metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, window: null, highlight: new Map(), pinned: null };
+  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -532,15 +550,18 @@ footer b { color: var(--ink); font-weight: 600; }
   // Applies a saved or linked view to state. highlight is [[team, slot], ...].
   // Returns whether it named the highlighted teams (possibly none).
   function applyView(saved) {
-    // Own keys only: a link could otherwise name an inherited one like toString.
-    if (hasOwn(RANGE_DAYS, saved.range)) state.range = saved.range;
-    // A window makes the range custom; a link may also name the preset it
-    // falls back to if the window is unusable.
-    if (Array.isArray(saved.window) && saved.window.length === 2
-        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1]
-        && saved.window[1] >= +snapshots[0].t && saved.window[0] <= +snapshots[snapshots.length - 1].t) {
-      state.range = 'custom';
-      state.window = [...saved.window];
+    // Own keys only: a stored or linked value could otherwise name an
+    // inherited one like toString.
+    const first = +snapshots[0].t;
+    if (saved.duration === null || saved.duration > 0) state.duration = saved.duration;
+    // An end before the data would show none of it.
+    if (Number.isFinite(saved.end) && saved.end >= first) state.end = saved.end;
+    // Saves from before durations: a preset key, or a dragged window.
+    if (saved.duration === undefined && hasOwn(DURATIONS, saved.range)) state.duration = DURATIONS[saved.range];
+    if (saved.duration === undefined && saved.range === 'custom' && Array.isArray(saved.window) && saved.window.length === 2
+        && saved.window.every(Number.isFinite) && saved.window[0] < saved.window[1] && saved.window[1] >= first) {
+      state.duration = saved.window[1] - saved.window[0];
+      state.end = saved.window[1];
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
@@ -563,28 +584,6 @@ footer b { color: var(--ink); font-weight: 600; }
     return saved.highlight.length === 0 || state.highlight.size > 0;
   }
 
-  // A link also names a pinned run, and where a preset window has slid to.
-  function applyLink(linked) {
-    const named = applyView(linked);
-    state.pinned = pinTime(findRun(linked.run));
-    if (state.pinned == null) return named;
-    const p = pinnedIndex();
-    const [i0, i1] = runsIn(currentWindow());
-    if (state.range === 'custom' && (p < i0 || p > i1)) {
-      // The run is the link's point; a window that leaves it out gives way.
-      setWindow(hasOwn(RANGE_DAYS, linked.range) ? linked.range : DEFAULTS.range);
-    }
-    // A slid window counts only if it shows the run and ends before the
-    // latest run; otherwise the preset slides to the run itself.
-    const days = RANGE_DAYS[state.range];
-    const t = state.pinned;
-    const span = days * DAY_MS;
-    if (days && linked.start <= t && t <= linked.start + span && linked.start + span < +snapshots[snapshots.length - 1].t) {
-      state.window = [linked.start, linked.start + span];
-    }
-    return named;
-  }
-
   // state.pinned is the pinned run's time, so it names the same run however
   // the list of runs changes. Pinning the latest run is pinning nothing.
   const pinTime = (i) => (i == null || i < 0 || i >= snapshots.length - 1 ? null : +snapshots[i].t);
@@ -604,8 +603,15 @@ footer b { color: var(--ink); font-weight: 600; }
       return saved.v >= STORE_VERSION ? named : state.highlight.size > 0;
     } catch { return false; }
   }
-  // Call after the view has been recomputed: computeView can drop a pinned run
-  // that falls outside a new window.
+  // A link also names the run the standings show; it need not be in the
+  // chart window.
+  function applyLink(linked) {
+    const named = applyView(linked);
+    state.pinned = pinTime(findRun(linked.asOf));
+    return named;
+  }
+
+  // Call after the view has been recomputed.
   function commit() {
     // Before the data loads there is no view to save; saving the empty state
     // would replace the reader's saved teams.
@@ -616,7 +622,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify({
-        v: STORE_VERSION, range: state.range, window: state.range === 'custom' ? linkWindow() : null, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
+        v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
       }));
     } catch { /* storage unavailable: the view still works, it just is not remembered */ }
   }
@@ -624,30 +630,26 @@ footer b { color: var(--ink); font-weight: 600; }
   // The address bar mirrors the view, so a copied link reproduces it. A link
   // with any of these parameters sets the whole view, with defaults for the
   // ones it leaves out; a bare link restores the reader's saved view instead.
-  //   run=2026-10-14T13:45:39Z         standings run (absent: the latest run,
-  //                                    whichever that is when the link opens)
-  //   range=d7&start_time=...          chart window as a preset, counting
-  //                                    back from the latest run; with
-  //                                    start_time, slid back to start there
-  //                                    (it slides to keep an older pinned run
-  //                                    in view)
-  //   start_time=...&end_time=...      chart window as dragged, snapped to
-  //                                    the first and last runs it shows
-  //   (times are UTC; one without a zone is read as UTC)
-  //   teams=vtjeng,,davidbau           highlighted teams by colour slot; an
-  //                                    empty entry is a free slot, so each team
-  //                                    keeps its colour (teams= is none)
-  //   metric=prng  pool=held  sort=anim-held  dir=asc
-  // Other parameters are left out at their defaults, but teams is always
-  // written: the default teams follow the latest standings, and a link should
-  // show the teams and colours it was copied with. So the address bar is bare
-  // only until the first render.
-  // Opening a link does not overwrite the saved view; the next change does.
+  //   as_of=2026-10-14T13:45Z      run the standings show (absent: the latest
+  //                                run, whichever that is when the link opens)
+  //   duration=7d                  chart window length: 7d, 36h, 3d4h13m or
+  //                                all (absent: 30d)
+  //   utc_end=2026-10-14T19:43Z    where the window ends (absent: live, at the
+  //                                latest run)
+  //   teams=vtjeng,,davidbau       highlighted teams by colour slot: entry N
+  //                                is colour N, empty where it is free, so a
+  //                                link shows the same colours (teams= is none)
+  //   metric=prng  pool=holdout  sort=anim-holdout  dir=asc
+  // Times are UTC to the minute; one without a zone is read as UTC. Other
+  // parameters are left out at their defaults, but teams is always written:
+  // the default teams follow the latest standings, and a link should show
+  // the teams and colours it was copied with.
   // The names are chosen not to clash with parameters that other services
   // add to a shared link (utm_source, fbclid, from=...); those are kept as
-  // they are, and a value of ours that makes no sense falls back to its
-  // default.
-  const isoSecond = (ms) => new Date(ms).toISOString().slice(0, 19) + 'Z';
+  // they are. A value of ours that makes no sense falls back to its default.
+  // Opening a link does not overwrite the saved view; the next change does.
+  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir'];
+  const isoMinute = (ms) => new Date(ms).toISOString().slice(0, 16) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
   // UTC. A typed '+' offset arrives as a space, and a space may separate the
   // date from the time.
@@ -663,34 +665,44 @@ footer b { color: var(--ink); font-weight: 600; }
       .replace(SPACED_TIME, '$1T$2');
     return Date.parse(NO_ZONE.test(s) ? s + 'Z' : s);
   }
-  // Links name runs to the second; the CSV keeps milliseconds. Returns the
-  // index of the run within a second of ms, or -1.
+  // Links name runs to the minute; runs are hours apart. Returns the index of
+  // the run within a minute of ms, or -1.
   function findRun(ms) {
     if (!Number.isFinite(ms)) return -1;
     const i = byTime.center(snapshots, ms);
-    return Math.abs(+snapshots[i].t - ms) < 1000 ? i : -1;
+    return Math.abs(+snapshots[i].t - ms) < MINUTE_MS ? i : -1;
   }
+  // duration=3d4h13m (or 7d, 36h, all); null is all history, undefined is
+  // not a duration.
+  function parseDuration(v) {
+    if (v === 'all') return null;
+    const m = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?$/.exec(v ?? '');
+    if (!m || !(m[1] || m[2] || m[3])) return undefined;
+    const ms = ((+(m[1] ?? 0) * 24 + +(m[2] ?? 0)) * 60 + +(m[3] ?? 0)) * MINUTE_MS;
+    return ms > 0 ? ms : undefined;
+  }
+  const formatDuration = (ms) => (ms == null ? 'all' : fmtDuration(ms).replace(/ /g, ''));
+  // Pools read better spelled out in a link than as the CSV's column prefixes.
+  const POOL_URL = { combined: 'combined', pub: 'public', held: 'holdout' };
+  const POOL_FROM_URL = Object.fromEntries(Object.entries(POOL_URL).map(([k, v]) => [v, k]));
+  const sortToUrl = (key) => key.replace(/-(\w+)$/, (_, pool) => '-' + (POOL_URL[pool] ?? pool));
+  const sortFromUrl = (key) => key.replace(/-(\w+)$/, (_, pool) => '-' + (POOL_FROM_URL[pool] ?? pool));
   // Within teams, commas separate slots; a comma or percent sign in a team
   // name is escaped so the name still round-trips.
   const escapeTeam = (team) => team.replace(/[%,]/g, (c) => (c === '%' ? '%25' : '%2C'));
   const unescapeTeam = (s) => s.replace(/%25|%2C/gi, (m) => (m === '%25' ? '%' : ','));
 
-  const URL_KEYS = ['run', 'range', 'start_time', 'end_time', 'teams', 'metric', 'pool', 'sort', 'dir'];
-  const isKnownTeam = (team) => knownTeams.has(team);
-
   function readUrl() {
     const params = new URLSearchParams(location.search);
     if (!URL_KEYS.some((k) => params.has(k))) return null;
-    // Every keyword value is lower case; accept a hand-typed range=D7.
+    // Every keyword value is lower case; accept a hand-typed duration=7D.
     const word = (k) => params.get(k)?.toLowerCase();
-    const linked = { metric: word('metric'), pool: word('pool'), range: word('range'), run: parseUtc(params.get('run')) };
-    const start = parseUtc(params.get('start_time'));
-    const end = parseUtc(params.get('end_time'));
-    if (start < end) linked.window = [start, end];
-    else if (!Number.isFinite(end)) linked.start = start; // a slid preset's
+    const linked = { metric: word('metric'), pool: POOL_FROM_URL[word('pool')], asOf: parseUtc(params.get('as_of')) };
+    if (params.has('duration')) linked.duration = parseDuration(word('duration'));
+    linked.end = parseUtc(params.get('utc_end'));
     const key = word('sort');
     const dir = word('dir');
-    if (key) linked.sort = { key, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(key) };
+    if (key) linked.sort = { key: sortFromUrl(key), dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(sortFromUrl(key)) };
     if (params.has('teams')) {
       const seen = new Set();
       linked.highlight = [];
@@ -729,28 +741,17 @@ footer b { color: var(--ink); font-weight: 600; }
     else urlTimer = setTimeout(writeUrl, urlWrites[0] + URL_BUDGET_MS - now);
   }
 
-  // A dragged window as saved and linked: snapped outward to whole seconds
-  // around the runs it shows. Runs are hours apart, so it reopens on exactly
-  // the same runs, even when computeView widened it to two.
-  const linkWindow = () => [Math.floor(+view.t0 / 1000) * 1000, Math.ceil(+view.t1 / 1000) * 1000];
-
   function flushUrl() {
     if (!view) return;
     const ours = new Map();
     const put = (k, v) => ours.set(k, v);
-    if (state.pinned != null) put('run', isoSecond(state.pinned));
-    if (state.range === 'custom' && state.window) {
-      const [start, end] = linkWindow();
-      put('start_time', isoSecond(start));
-      put('end_time', isoSecond(end));
-    } else {
-      if (state.range !== DEFAULTS.range) put('range', state.range);
-      if (state.window) put('start_time', isoSecond(state.window[0])); // whole seconds: see slidePreset
-    }
+    if (state.pinned != null) put('as_of', isoMinute(state.pinned));
+    if (state.duration !== DEFAULTS.duration) put('duration', formatDuration(state.duration));
+    if (state.end != null) put('utc_end', isoMinute(ceilMinute(state.end)));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
-    if (state.pool !== DEFAULTS.pool) put('pool', state.pool);
+    if (state.pool !== DEFAULTS.pool) put('pool', POOL_URL[state.pool]);
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
-      put('sort', state.sort.key);
+      put('sort', sortToUrl(state.sort.key));
       if (state.sort.dir !== firstDir(state.sort.key)) put('dir', state.sort.dir);
     }
     const slots = [];
@@ -763,9 +764,8 @@ footer b { color: var(--ink); font-weight: 600; }
       try { return decodeURIComponent(part.split('=')[0].replace(/\+/g, ' ')); } catch { return part; }
     };
     const enc = (v) => encodeURIComponent(v).replace(/%2C/g, ',').replace(/%3A/g, ':');
-    const written = [...ours].map(([k, v]) => `${k}=${enc(v)}`);
     const kept = location.search.slice(1).split('&').filter((part) => part && !URL_KEYS.includes(keyOf(part)));
-    const query = [...kept, ...written].join('&');
+    const query = [...kept, ...[...ours].map(([k, v]) => `${k}=${enc(v)}`)].join('&');
     const url = `${location.pathname}?${query}${location.hash}`;
     if (url === location.pathname + location.search + location.hash) return;
     urlWrites.push(Date.now());
@@ -797,45 +797,16 @@ footer b { color: var(--ink); font-weight: 600; }
     commit();
   }
 
-  // state.window is a dragged window, or where a preset window has slid back
-  // to; null for a preset that ends at the latest run.
-  function setWindow(range, win = null) {
-    state.range = range;
-    state.window = win;
+  function setWindow(duration, end = null) {
+    state.duration = duration;
+    state.end = end;
   }
 
   function currentWindow() {
     const first = +snapshots[0].t;
     const last = +snapshots[snapshots.length - 1].t;
-    if (state.window) return [Math.max(first, state.window[0]), Math.min(last, state.window[1])];
-    const days = RANGE_DAYS[state.range];
-    return [days ? Math.max(first, last - days * DAY_MS) : first, last];
-  }
-
-  // A preset window keeps the pinned run in view, sliding only as far as it
-  // must when the run leaves it, and returns to the latest run when unpinned.
-  // Its edges are whole seconds, as a link gives them, so a link reopens it
-  // exactly.
-  function slidePreset() {
-    const days = RANGE_DAYS[state.range];
-    if (!days) return;
-    if (pinnedIndex() == null) {
-      state.window = null;
-      return;
-    }
-    const t = state.pinned;
-    const [w0, w1] = currentWindow();
-    const span = days * DAY_MS;
-    const SEC = 1000;
-    if (t < w0) {
-      const start = Math.floor(t / SEC) * SEC;
-      state.window = [start, start + span];
-    } else if (t > w1) {
-      const end = Math.ceil(t / SEC) * SEC;
-      state.window = [end - span, end];
-    }
-    // A window reaching the latest run is the preset's own.
-    if (state.window && state.window[1] >= +snapshots[snapshots.length - 1].t) state.window = null;
+    const end = state.end == null ? last : Math.max(first, Math.min(last, state.end));
+    return [state.duration == null ? first : Math.max(first, end - state.duration), end];
   }
 
   // The first and last runs a window shows. A window narrower than the gap
@@ -850,8 +821,17 @@ footer b { color: var(--ink); font-weight: 600; }
     return [i0, i1];
   }
 
+  // A dragged window, as stored: snapped outward to whole minutes around the
+  // runs it shows (runs are hours apart, so it reopens on the same runs), and
+  // live when it reaches the latest run.
+  function setDraggedWindow(t0, t1) {
+    const [i0, i1] = runsIn([t0, t1]);
+    const start = floorMinute(+snapshots[i0].t);
+    const end = ceilMinute(+snapshots[i1].t);
+    setWindow(end - start, i1 === snapshots.length - 1 ? null : end);
+  }
+
   function computeView() {
-    slidePreset();
     const metric = METRICS[state.metric];
     const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
@@ -865,9 +845,8 @@ footer b { color: var(--ink); font-weight: 600; }
         return { t: s.t, v: v == null || Number.isNaN(v) ? null : v };
       }));
     });
-    // Only a dragged window can leave the pinned run out; it drops the pin.
-    const p = pinnedIndex();
-    if (p == null || p < i0 || p > i1) state.pinned = null;
+    // A pinned run that has left the data is unpinned.
+    if (pinnedIndex() == null) state.pinned = null;
     view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
@@ -875,25 +854,26 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const name of ['metric', 'pool']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    // A dragged window, or a preset slid back to a pinned run, gets its own
-    // menu entry while it lasts, so picking a preset returns to the latest
-    // run. It is added and removed rather than hidden: Safari shows hidden
-    // options.
-    const days = RANGE_DAYS[state.range];
-    const label = state.range === 'custom' ? 'Custom'
-      : days && state.window ? `${days} days to ${fmtDay.format(view.t1)}` : null;
+    // A duration that is not a preset gets a Custom entry while it lasts. It
+    // is added and removed rather than hidden: Safari shows hidden options.
+    const preset = Object.keys(DURATIONS).find((k) => DURATIONS[k] === state.duration);
     const select = $('range');
-    let extra = $('range-extra');
-    if (label && !extra) {
-      extra = new Option('', 'extra');
-      extra.id = 'range-extra';
-      extra.disabled = true;
-      select.add(extra);
-    } else if (!label && extra) {
-      extra.remove();
+    let custom = $('range-custom');
+    if (!preset && !custom) {
+      custom = new Option('', 'custom');
+      custom.id = 'range-custom';
+      custom.disabled = true;
+      select.add(custom);
+    } else if (preset && custom) {
+      custom.remove();
     }
-    if (label) extra.textContent = label;
-    select.value = label ? 'extra' : state.range;
+    if (!preset) custom.textContent = `Custom (${fmtDuration(state.duration)})`;
+    select.value = preset ?? 'custom';
+    const live = state.end == null;
+    $('range-end').textContent = live ? 'Live' : `Ends ${fmtTime.format(view.t1)}`;
+    $('range-freeze').textContent = live ? 'Freeze' : 'Go live';
+    $('range-freeze').title = live ? 'Stop the window following new runs: hold it at the latest run'
+      : 'Let the window follow new runs again';
   }
 
   function renderLegend() {
@@ -955,7 +935,11 @@ footer b { color: var(--ink); font-weight: 600; }
   function renderChart() {
     const m = view.metric;
     $('chart-title').textContent = m.title;
-    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`;
+    // The standings may show a run outside the window; say so, as there is no
+    // marker to draw.
+    const outside = state.pinned != null && (state.pinned < +view.t0 || state.pinned > +view.t1);
+    $('chart-sub').textContent = `${m.pooled ? POOL_TEXT[state.pool][0].toUpperCase() + POOL_TEXT[state.pool].slice(1) : 'Linear speed fit'} · ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}`
+      + (outside ? ` · standings at ${fmtDay.format(state.pinned)}, outside this window` : '');
 
     const W = Math.max(280, chartEl.clientWidth);
     const H = Math.round(Math.max(260, Math.min(440, W * 0.46)));
@@ -988,7 +972,7 @@ footer b { color: var(--ink); font-weight: 600; }
       .attr('x', (d) => x(d)).attr('y', H - margin.bottom + 18)
       .attr('text-anchor', 'middle').text(xFormat);
 
-    if (state.pinned != null) {
+    if (state.pinned != null && !outside) {
       const px = x(state.pinned);
       g.append('line')
         .attr('x1', px).attr('x2', px).attr('y1', margin.top).attr('y2', H - margin.bottom)
@@ -1114,9 +1098,8 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
 
-  // A drag on the overview: the pin and selection it began with, and whether
-  // the window has moved. The pin is judged against the window the drag ends
-  // on, not each step.
+  // A drag on the overview: the selection it began with, and whether the
+  // window has moved.
   let drag = null;
   const CLICK_SLOP_PX = 3;
   let pendingSnapshots = null; // data that arrived during a drag
@@ -1125,16 +1108,10 @@ footer b { color: var(--ink); font-weight: 600; }
     if (type === 'start') {
       // Only a move of the whole window ('drag') can be a click in disguise;
       // a resize by a pixel or two is deliberate.
-      drag = { pin: state.pinned, start: mode === 'drag' ? [...selection] : null, moved: false };
+      drag = { start: mode === 'drag' ? [...selection] : null, moved: false };
       return;
     }
-    // No drag, or one a keyboard slide ended (see pin): its events are
-    // ignored until the next drag starts.
-    if (!drag || drag.orphan) {
-      // Its steps may already have moved the window.
-      if (type === 'end' && drag) finishDrag();
-      return;
-    }
+    if (!drag) return;
     // A click on the strip starts a zero-width selection; it is not a window
     // until the drag widens it, and a drag released that narrow clears it.
     const empty = !selection || selection[1] - selection[0] < 1;
@@ -1144,33 +1121,25 @@ footer b { color: var(--ink); font-weight: 600; }
         && Math.abs(drag.start[0] - selection[0]) < CLICK_SLOP_PX && Math.abs(drag.start[1] - selection[1]) < CLICK_SLOP_PX;
       if (empty || jitter) return;
       drag.moved = true;
-      setWindow('custom', selection.map((px) => +mini.x.invert(px)));
-      const shown = state.pinned;
-      state.pinned = drag.pin;
+      const [t0, t1] = selection.map((px) => +mini.x.invert(px));
+      setWindow(t1 - t0, t1);
       hideHover();
       computeView();
       renderFilters();
       renderChart();
-      if (state.pinned !== shown) {
-        // The window left the pinned run behind: the table shows the latest.
-        // The URL waits for the release.
-        renderTable();
-      }
       return;
     }
     // A click outside the window clears it (show everything); a press that
     // never moved it leaves it as it was; anything else is the dragged window.
-    if (empty) setWindow('all');
-    else if (drag.moved) setWindow('custom', selection.map((px) => +mini.x.invert(px)));
+    if (empty) setWindow(null);
+    else if (drag.moved) setDraggedWindow(...selection.map((px) => +mini.x.invert(px)));
     finishDrag();
   }
 
-  // The drag is over: it keeps the pin it began with (if the final window
-  // shows it), and everything is redrawn, which also catches up on a resize,
-  // a slide from a pin made mid-drag, and data that arrived during it.
+  // The drag is over: everything is redrawn, which also catches up on a
+  // resize and data that arrived during it.
   function finishDrag() {
     hideHover();
-    state.pinned = drag.pin;
     drag = null;
     if (pendingSnapshots) {
       setSnapshots(pendingSnapshots);
@@ -1470,19 +1439,6 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function pin(i) {
     state.pinned = pinTime(i);
-    // A pin made mid-drag (arrow keys) is the one the drag ends with.
-    if (drag) drag.pin = state.pinned;
-    const win = state.window;
-    computeView();
-    if (state.window !== win) {
-      // The preset window slid; move the overview's window to match rather
-      // than redrawing the strip.
-      renderFilters();
-      // A drag under way would rebuild the window from the brush's old place
-      // on its next step, so it ends here; its release finishes it.
-      if (drag) drag.orphan = true;
-      mini.moveTo(view.t0, view.t1);
-    }
     renderChart();
     renderTable();
     writeUrl();
@@ -1491,7 +1447,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // The controls wait for the data: until then the link or saved view has
   // not been applied, and a change would be lost.
   function setControlsEnabled(on) {
-    document.querySelectorAll('.opts input, #range').forEach((el) => { el.disabled = !on; });
+    document.querySelectorAll('.opts input, #range, #range-freeze').forEach((el) => { el.disabled = !on; });
   }
 
   function wire() {
@@ -1504,13 +1460,17 @@ footer b { color: var(--ink); font-weight: 600; }
         commit();
       });
     });
+    // A new duration keeps the window's end, live or frozen.
     $('range').addEventListener('change', (e) => {
-      setWindow(e.target.value);
-      // A picked preset shows its latest window; a pinned run outside that
-      // goes, rather than sliding the window straight back.
-      const [i0] = runsIn(currentWindow());
-      const p = pinnedIndex();
-      if (p != null && p < i0) state.pinned = null;
+      setWindow(DURATIONS[e.target.value], state.end);
+      hideHover();
+      renderAll();
+      commit();
+    });
+    // Freezing ends the window at the latest run (to the minute, as a link
+    // gives it); going live lets it follow new runs.
+    $('range-freeze').addEventListener('click', () => {
+      setWindow(state.duration, state.end == null ? ceilMinute(+snapshots[snapshots.length - 1].t) : null);
       hideHover();
       renderAll();
       commit();
@@ -1533,25 +1493,27 @@ footer b { color: var(--ink); font-weight: 600; }
     });
     node.addEventListener('keydown', (e) => {
       if (!view) return;
-      // A preset window follows the pinned run, so the arrow keys can step
-      // past its edges; a dragged window stays put and bounds them.
       const last = snapshots.length - 1;
       const end = view.i0 + view.visible.length - 1;
-      const custom = state.range === 'custom';
-      const [lo, hi] = custom ? [view.i0, end] : [0, last];
-      // With nothing pinned the table shows the latest run, which a dragged
-      // window may end before: the arrows then step in from its right edge.
-      const at = pinnedIndex() ?? (custom ? Math.min(last, end + 1) : last);
+      if (e.key === 'Escape') {
+        // Back to the latest run; with nothing pinned there is nothing to do.
+        if (state.pinned == null) return;
+        e.preventDefault();
+        pin(null);
+        if (last <= end) showHover(last - view.i0);
+        else hideHover();
+        return;
+      }
+      // The table's run may lie outside the window (or be the latest run,
+      // after its end); the arrows then step in from the nearer edge.
+      const at = Math.max(view.i0 - 1, Math.min(end + 1, pinnedIndex() ?? last));
       let i;
       if (e.key === 'ArrowLeft') i = at - 1;
       else if (e.key === 'ArrowRight') i = at + 1;
       else if (e.key === 'Home') i = view.i0;
       else if (e.key === 'End') i = end;
-      // Escape returns to the latest run, or in a dragged window to its last;
-      // with nothing pinned there is nothing to return from.
-      else if (e.key === 'Escape') i = state.pinned == null ? null : custom ? end : last;
       else return;
-      if (i == null || i < lo || i > hi) return;
+      if (i < view.i0 || i > end) return;
       e.preventDefault();
       pin(i);
       showHover((pinnedIndex() ?? last) - view.i0);
@@ -1589,8 +1551,8 @@ footer b { color: var(--ink); font-weight: 600; }
 
   async function loadSnapshots() {
     const rows = await d3.csv(CSV_URL, { cache: 'no-store' }, d3.autoType);
-    const runs = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
-    return [...runs].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
+    const byTime = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
+    return [...byTime].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
       t: new Date(t),
       byTeam: new Map(rs.map((r) => [r.team, r])),
     }));
