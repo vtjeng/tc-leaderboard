@@ -2,7 +2,13 @@
 # Cloudflare Workers Builds runs `npx wrangler deploy` on every push to main.
 name = "tc-leaderboard"
 compatibility_date = "2026-10-01"
+preview_urls = true
 routes = [{ pattern = "tc-leaderboard.vtjeng.com", custom_domain = true }]
 
 [assets]
 directory = "."
+
+# Workers Builds runs `npx wrangler preview` for each non-main branch. That
+# needs this block, even empty, and preview_urls gives each preview a
+# workers.dev address that Cloudflare posts on the pull request.
+[previews]
