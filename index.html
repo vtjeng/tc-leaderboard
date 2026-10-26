@@ -284,15 +284,10 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 .tip li { display: grid; grid-template-columns: 14px auto 1fr; align-items: center; gap: 0.5rem; }
 .tip li b { font: 500 var(--step--1) var(--font-data); font-variant-numeric: tabular-nums; }
 .tip li span.name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tip li.hl span.name { color: var(--ink); font-weight: 600; }
 .tip-add { padding-bottom: 0.4rem; margin-bottom: 0.4rem; border-bottom: 1px solid var(--hairline); }
 .tip .act { margin-top: 0.3rem; color: var(--ink); font-weight: 600; font-size: var(--step--2); }
 .tip .act.blocked { color: var(--muted); font-weight: 400; }
-/* Hovering a highlighted line fades the other highlighted lines, their
-   dots and their tooltip rows. */
-.chart.focus svg :is(.is-focus, .end, .hdot):not(.on) { opacity: 0.2; }
-.chart.focus .tip li:not(.hl) { opacity: 0.45; }
-.chart svg :is(.hover, .hot, .end) { pointer-events: none; }
+.chart svg :is(.hover, .hot) { pointer-events: none; }
 .hint { color: var(--muted); font-size: var(--step--2); margin: 0; padding-left: 1.1rem; display: grid; gap: 0.15rem; }
 .mini svg { display: block; width: 100%; }
 .mini svg text { font: 400 10px var(--font-data); fill: var(--muted); }
@@ -451,7 +446,7 @@ footer b { color: var(--ink); font-weight: 600; }
     </div>
     <ul class="hint">
       <li>Hover or tap the chart to read values.</li>
-      <li>Click a grey line to highlight that team, or a coloured line to remove it.</li>
+      <li>Click a grey line to highlight that team; to remove a team, use the &times; on its label above the chart or click its row in the table.</li>
       <li>Click or tap anywhere else on the chart to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
       <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
       <li>A window that reaches the latest run is live and follows new runs; drag it back, or fix its end in the range menu, and it stays where you leave it.</li>
@@ -1146,7 +1141,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const hot = g.append('path').attr('class', 'hot').style('display', 'none')
       .attr('fill', 'none').style('stroke', 'var(--ink-2)').attr('stroke-width', 2).attr('stroke-linejoin', 'round');
     g.append('g').selectAll('path').data(focus).join('path')
-      .attr('class', 'line is-focus').attr('data-team', ([team]) => team).attr('d', ([, d]) => d)
+      .attr('class', 'line').attr('d', ([, d]) => d)
       .attr('fill', 'none').style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`)
       .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
     // Each highlighted line is marked at the run the standings show, when it
@@ -1156,26 +1151,39 @@ footer b { color: var(--ink); font-weight: 600; }
       return p?.v != null ? { team, p } : null;
     }).filter(Boolean) : [];
     g.append('g').selectAll('circle').data(marks).join('circle')
-      .attr('class', 'end').attr('data-team', (d) => d.team)
       .attr('cx', (d) => x(d.p.t)).attr('cy', (d) => y(d.p.v)).attr('r', 4)
       .style('fill', (d) => `var(--s${state.highlight.get(d.team)})`)
       .style('stroke', 'var(--surface)').attr('stroke-width', 2);
 
-    // Clicking a line adds or removes its team, as on ap-poll.vtjeng.com.
-    // Each line has a transparent 10px-wide twin that takes the pointer; the
-    // highlighted lines' twins come last, so they win where lines overlap.
+    // Clicking a grey line adds its team, as on ap-poll.vtjeng.com; a click
+    // anywhere else, a highlighted line included, pins the run. Each grey line
+    // has a transparent 6px strip that takes the pointer, along its flat runs
+    // only: the risers, frequent on the speed charts, would otherwise cover
+    // much of the plot.
+    const flats = (pts) => {
+      let d = '';
+      let open = false;
+      for (let k = 0; k + 1 < pts.length; k += 1) {
+        const a = pts[k];
+        const b = pts[k + 1];
+        if (a.v == null || b.v == null || b.t - a.t > GAP_MS) { open = false; continue; }
+        if (!open || a.v !== pts[k - 1].v) d += `M${x(a.t)},${y(a.v)}`;
+        d += `H${x(b.t)}`;
+        open = true;
+      }
+      return d;
+    };
     const full = state.highlight.size >= MAX_HIGHLIGHT;
-    g.append('g').selectAll('path').data([...context, ...focus]).join('path')
-      .attr('class', 'hit').attr('d', ([, d]) => d)
-      .attr('fill', 'none').style('stroke', 'transparent').attr('stroke-width', 10).attr('pointer-events', 'stroke')
-      .style('cursor', ([team]) => (full && !state.highlight.has(team) ? 'not-allowed' : 'pointer'))
+    g.append('g').selectAll('path').data(context).join('path')
+      .attr('class', 'hit').attr('d', ([team]) => flats(view.series.get(team)))
+      .attr('fill', 'none').style('stroke', 'transparent').attr('stroke-width', 6).attr('pointer-events', 'stroke')
+      .style('cursor', full ? 'not-allowed' : 'pointer')
       .on('pointerenter', (e, [team]) => enterLine(team))
       .on('pointerleave', leaveLine)
       .on('click', (e, [team]) => clickLine(e, team));
     chart.paths = paths;
     chart.hot = hot;
     hoverTeam = null;
-    chartEl.classList.remove('focus');
 
     const hover = g.append('g').attr('class', 'hover').style('display', 'none');
     hover.append('line').attr('class', 'cross')
@@ -1425,19 +1433,16 @@ footer b { color: var(--ink); font-weight: 600; }
     });
     rows.sort((a, b) => (view.metric.lowerIsBetter ? a.v - b.v : b.v - a.v));
     // A grey line under the pointer gets a dot and a tooltip row of its own.
-    const adding = hoverTeam != null && !state.highlight.has(hoverTeam);
-    const addV = adding ? view.series.get(hoverTeam)?.[i]?.v : null;
-    const dots = rows.map((r) => ({ team: r.team, v: r.v, c: `var(--s${r.slot})` }));
-    if (addV != null) dots.push({ team: hoverTeam, v: addV, c: 'var(--ink-2)' });
+    const addV = hoverTeam != null ? view.series.get(hoverTeam)?.[i]?.v : null;
+    const dots = rows.map((r) => ({ v: r.v, c: `var(--s${r.slot})` }));
+    if (addV != null) dots.push({ v: addV, c: 'var(--ink-2)' });
     hover.select('.dots').selectAll('circle').data(dots).join('circle')
-      .attr('class', 'hdot').classed('on', (d) => d.team === hoverTeam)
       .attr('cx', px).attr('cy', (d) => y(d.v)).attr('r', 4)
       .style('fill', (d) => d.c)
       .style('stroke', 'var(--surface)').attr('stroke-width', 2);
 
     const tipRow = (team, color, v) => {
       const li = document.createElement('li');
-      if (team === hoverTeam) li.className = 'hl';
       const key = document.createElement('span');
       key.className = 'linekey';
       key.style.setProperty('--c', color);
@@ -1459,7 +1464,7 @@ footer b { color: var(--ink); font-weight: 600; }
     time.className = 'tip-time';
     time.textContent = fmtTime.format(s.t);
     const parts = [time];
-    if (adding) {
+    if (hoverTeam != null) {
       const add = document.createElement('div');
       add.className = 'tip-add';
       const one = document.createElement('ol');
@@ -1473,11 +1478,10 @@ footer b { color: var(--ink); font-weight: 600; }
     for (const r of rows) ol.append(tipRow(r.team, `var(--s${r.slot})`, r.v));
     if (!rows.length) {
       const li = document.createElement('li');
-      li.textContent = 'Click a line, or a row in the table, to highlight a team.';
+      li.textContent = 'Click a grey line, or a row in the table, to highlight a team.';
       ol.append(li);
     }
     parts.push(ol);
-    if (hoverTeam != null && !adding) parts.push(act(`Click the line to remove ${hoverTeam}.`));
     tip.replaceChildren(...parts);
     chart.hoverIndex = i;
     tip.hidden = false;
@@ -1494,18 +1498,12 @@ footer b { color: var(--ink); font-weight: 600; }
 
   function enterLine(team) {
     hoverTeam = team;
-    if (state.highlight.has(team)) {
-      chartEl.classList.add('focus');
-      svg.selectAll('[data-team]').classed('on', function () { return this.dataset.team === team; });
-    } else {
-      chart.hot.attr('d', chart.paths.get(team)).style('display', null);
-    }
+    chart.hot.attr('d', chart.paths.get(team)).style('display', null);
     if (chart.hoverIndex != null) showHover(chart.hoverIndex);
   }
 
   function leaveLine() {
     hoverTeam = null;
-    chartEl.classList.remove('focus');
     chart.hot.style('display', 'none');
     if (chart.hoverIndex != null) showHover(chart.hoverIndex);
   }
@@ -1513,7 +1511,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function clickLine(e, team) {
     // The chart's own click handler would also pin the run under the pointer.
     e.stopPropagation();
-    if (!state.highlight.has(team) && state.highlight.size >= MAX_HIGHLIGHT) return;
+    if (state.highlight.size >= MAX_HIGHLIGHT) return;
     toggleHighlight(team);
     showHover(nearestIndex(d3.pointer(e, svg.node())[0]));
   }
