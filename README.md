@@ -44,10 +44,12 @@ immediately, run `gh workflow run update.yml`.
 
 ## Dashboard
 
-`index.html` loads the CSV and charts one metric per team over time. The same
-workflow deploys it to <https://vtjeng.github.io/tc-leaderboard/> on every data
-update and every push to `main`. To view it locally, serve this folder over
-HTTP and open <http://localhost:8000/>:
+`index.html` loads the CSV and charts one metric per team over time. Cloudflare
+Workers Builds deploys it to <https://tc-leaderboard.vtjeng.com/> on every push
+to `main`, data updates included (`wrangler.toml`). The Worker serves only the
+files `.assetsignore` allows, so a new file the page loads must be added there.
+To view it locally, serve this folder over HTTP and open
+<http://localhost:8000/>:
 
 ```sh
 python3 -m http.server

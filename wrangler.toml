@@ -1,0 +1,8 @@
+# Static site on Cloudflare Workers: serves index.html and data/ as they are.
+# Cloudflare Workers Builds runs `npx wrangler deploy` on every push to main.
+name = "tc-leaderboard"
+compatibility_date = "2026-10-01"
+routes = [{ pattern = "tc-leaderboard.vtjeng.com", custom_domain = true }]
+
+[assets]
+directory = "."

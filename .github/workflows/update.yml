@@ -1,14 +1,13 @@
-name: Update data and deploy
+name: Update data
 
 on:
   schedule:
     # Every 15 minutes, off the hour. GitHub runs scheduled workflows on a
     # best-effort basis and skipped 5 of the first 6 hourly slots, so more
     # slots make a long gap less likely. A run that finds no new judge run
-    # commits nothing and does not redeploy.
+    # commits nothing. Each data commit to main redeploys the site through
+    # Cloudflare Workers Builds (wrangler.toml).
     - cron: "7,22,37,52 * * * *"
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -20,17 +19,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      changed: ${{ steps.commit.outputs.changed }}
     steps:
       - uses: actions/checkout@v7
       - run: python3 update_data.py
-      - id: commit
-        name: Commit the CSV if it changed
+      - name: Commit the CSV if it changed
         run: |
           git add data/leaderboard.csv
           if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           latest=$(tail -n 1 data/leaderboard.csv | cut -d, -f1)
@@ -38,25 +33,3 @@ jobs:
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -m "Update data through the $latest run"
           git push
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-      - name: Assemble the site
-        run: mkdir -p _site/data && cp index.html _site/ && cp data/leaderboard.csv _site/data/
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: _site
-
-  deploy:
-    needs: update
-    # Scheduled runs redeploy only when a new judge run arrived; pushes and
-    # manual runs always redeploy, so dashboard changes go out.
-    if: github.event_name != 'schedule' || needs.update.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@v5

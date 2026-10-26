@@ -1,0 +1,5 @@
+# Publish only the page and its data; everything else in the repo stays private.
+*
+!index.html
+!data/
+!data/leaderboard.csv
