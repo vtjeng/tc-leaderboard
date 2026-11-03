@@ -151,6 +151,23 @@ h1 {
 body.loading .opts, body.loading .range-row, body.load-failed .opts, body.load-failed .range-row { opacity: 0.55; pointer-events: none; }
 body.loading .controls { cursor: progress; }
 .seg-range { margin-left: auto; }
+.y-actions { display: flex; gap: 0.35rem; }
+.y-actions button {
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step--1);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.y-actions button:disabled, .y-actions button[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.y-actions button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+@media (hover: hover) {
+  .y-actions button:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--wash); }
+}
 .range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .sentinel { height: 0; }
 .select-wrap { position: relative; display: block; }
@@ -405,6 +422,13 @@ footer b { color: var(--ink); font-weight: 600; }
           <label><input type="radio" disabled name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
         </div>
       </div>
+      <div class="seg" role="group" aria-labelledby="l-y-axis">
+        <span class="seg-label" id="l-y-axis">Y-axis <span id="y-status" role="status">· automatic</span></span>
+        <div class="y-actions">
+          <button type="button" id="fit-highlighted" aria-describedby="y-hint" disabled>Fit highlighted</button>
+          <button type="button" id="reset-y" disabled>Reset Y-axis</button>
+        </div>
+      </div>
       <div class="seg seg-range">
         <label class="seg-label" for="range">Range</label>
         <div class="range-row">
@@ -447,6 +471,7 @@ footer b { color: var(--ink); font-weight: 600; }
     </div>
     <ul class="hint">
       <li>Hover or tap the chart to read values.</li>
+      <li id="y-hint">Fit highlighted fixes the Y-axis to this window’s highlighted values. Move through time at that scale; fit again or reset as needed. Changing the metric or pool resets it.</li>
       <li>Click a grey line to highlight that team; to remove a team, use the &times; on its label above the chart or click its row in the table.</li>
       <li>Click or tap anywhere else on the chart to show the standings at that run; with the chart focused, the arrow keys step between runs.</li>
       <li>In the overview strip, drag the window to move it, drag its grips to resize it, or drag anywhere else to draw a new one.</li>
@@ -600,7 +625,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
   const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
-  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null };
+  const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null, yRange: null };
 
   // Object.hasOwn needs Safari 15.4.
   const hasOwn = (obj, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(obj, key);
@@ -632,6 +657,9 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
+    if (Array.isArray(saved.yRange) && saved.yRange.length === 2
+        && saved.yRange.every(Number.isFinite) && saved.yRange[0] < saved.yRange[1]
+        && Number.isFinite(saved.yRange[1] - saved.yRange[0])) state.yRange = [...saved.yRange];
     if (saved.sort && parseSortKey(saved.sort.key) && (saved.sort.dir === 'asc' || saved.sort.dir === 'desc')) {
       state.sort = { key: saved.sort.key, dir: saved.sort.dir };
     }
@@ -721,7 +749,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // keeping their own saved view until then.
   let lastForm = null;
   const savedForm = () => JSON.stringify({
-    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight],
+    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight], yRange: state.yRange,
   });
   function save() {
     const form = savedForm();
@@ -754,7 +782,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // add to a shared link (utm_source, fbclid, from=...); those are kept as
   // they are. A value of ours that makes no sense falls back to its default.
   // Opening a link does not overwrite the saved view; the next change does.
-  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir'];
+  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir', 'y_range'];
   // Rounded up: a run at 13:45:39 is written 13:46, at or after it.
   const isoMinute = (ms) => new Date(ceilMinute(ms)).toISOString().slice(0, 16) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
@@ -800,6 +828,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const linked = { metric: word('metric'), pool: poolFromUrl(pool), asOf: parseUtc(params.get('as_of')) };
     if (params.has('duration')) linked.duration = parseDuration(word('duration'));
     if (params.has('utc_end')) linked.end = parseUtc(params.get('utc_end'));
+    if (params.has('y_range')) linked.yRange = params.get('y_range').split(',').map((v) => v.trim() ? Number(v) : NaN);
     const key = word('sort');
     const dir = word('dir');
     // dir alone applies to the default order.
@@ -856,6 +885,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (state.end != null) put('utc_end', isoMinute(state.end));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', POOL_URL[state.pool]);
+    if (state.yRange) put('y_range', state.yRange.join(','));
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
       put('sort', sortToUrl(state.sort.key));
       if (state.sort.dir !== firstDir(state.sort.key)) put('dir', state.sort.dir);
@@ -1078,8 +1108,45 @@ footer b { color: var(--ink); font-weight: 600; }
     return [interval, d3.timeFormat(fmt)];
   }
 
+  function highlightedExtent() {
+    let lo = Infinity;
+    let hi = -Infinity;
+    state.highlight.forEach((_, team) => {
+      view.series.get(team)?.forEach(({ v }) => {
+        if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      });
+    });
+    return lo <= hi ? [lo, hi] : null;
+  }
+
+  function fitHighlighted() {
+    const extent = view && highlightedExtent();
+    if (!extent) return;
+    const [lo, hi] = extent;
+    // Give flat series room too, including a series whose values are all zero.
+    const pad = (hi - lo || Math.abs(hi) || 1) * 0.05;
+    const domain = d3.scaleLinear().domain([lo < 0 ? lo - pad : Math.max(0, lo - pad), hi + pad]).nice().domain();
+    if (view.metric.domain) {
+      domain[0] = Math.max(domain[0], view.metric.domain[0]);
+      domain[1] = Math.min(domain[1], view.metric.domain[1]);
+    }
+    // Store the bounds once; time and highlight changes never recalculate them.
+    state.yRange = domain;
+    hideHover();
+    renderChart();
+    commit();
+  }
+
   function renderChart() {
     const m = view.metric;
+    const canFit = highlightedExtent() != null;
+    $('fit-highlighted').disabled = false;
+    $('fit-highlighted').setAttribute('aria-disabled', String(!canFit));
+    $('fit-highlighted').title = canFit ? '' : 'Highlight a team with values in this window to fit the Y-axis.';
+    $('reset-y').disabled = false;
+    $('reset-y').setAttribute('aria-disabled', String(!state.yRange));
+    const yStatus = state.yRange ? '· fixed' : '· automatic';
+    if ($('y-status').textContent !== yStatus) $('y-status').textContent = yStatus;
     $('chart-title').textContent = m.title;
     // The standings may show a run outside the window; say so, as there is no
     // marker to draw.
@@ -1103,7 +1170,8 @@ footer b { color: var(--ink); font-weight: 600; }
     // below zero, which is not worth an extra gridline.
     const [lo, hi] = m.domain ?? [0, Math.max(d3.max(values) ?? 1, 1e-9)];
     const x = d3.scaleTime().domain([view.t0, view.t1]).range([margin.left, W - margin.right]);
-    const y = d3.scaleLinear().domain([lo, hi]).nice().range([H - margin.bottom, margin.top]);
+    const y = d3.scaleLinear().domain(state.yRange ?? [lo, hi]).range([H - margin.bottom, margin.top]);
+    if (!state.yRange) y.nice();
     chart = { x, y, margin, W, H };
 
     const g = svg.append('g');
@@ -1129,19 +1197,25 @@ footer b { color: var(--ink); font-weight: 600; }
         .style('stroke', 'var(--ink)').attr('stroke-opacity', 0.35).attr('stroke-width', 1);
     }
 
+    // Clip data and hit targets together so off-scale teams cannot cover axes
+    // or be selected outside the plot. The overview keeps its full scale.
+    g.append('defs').append('clipPath').attr('id', 'plot-clip').append('rect')
+      .attr('x', margin.left).attr('y', margin.top)
+      .attr('width', W - margin.left - margin.right).attr('height', H - margin.top - margin.bottom);
+    const plot = g.append('g').attr('clip-path', 'url(#plot-clip)');
     const line = d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => y(d.v)).curve(d3.curveStepAfter);
     const paths = new Map([...view.series].map(([team, pts]) => [team, gapPath(line, pts)]));
     const context = [...paths].filter(([team]) => !state.highlight.has(team));
     const focus = [...paths].filter(([team]) => state.highlight.has(team));
-    g.append('g').selectAll('path').data(context).join('path')
+    plot.append('g').selectAll('path').data(context).join('path')
       .attr('class', 'line').attr('d', ([, d]) => d)
       .attr('fill', 'none').style('stroke', 'var(--context)').attr('stroke-width', 1.25)
       .attr('stroke-linejoin', 'round');
     // A darker copy of the grey line under the pointer, drawn below the
     // highlighted lines.
-    const hot = g.append('path').attr('class', 'hot').style('display', 'none')
+    const hot = plot.append('path').attr('class', 'hot').style('display', 'none')
       .attr('fill', 'none').style('stroke', 'var(--ink-2)').attr('stroke-width', 2).attr('stroke-linejoin', 'round');
-    g.append('g').selectAll('path').data(focus).join('path')
+    plot.append('g').selectAll('path').data(focus).join('path')
       .attr('class', 'line').attr('d', ([, d]) => d)
       .attr('fill', 'none').style('stroke', ([team]) => `var(--s${state.highlight.get(team)})`)
       .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round');
@@ -1151,7 +1225,7 @@ footer b { color: var(--ink); font-weight: 600; }
       const p = view.series.get(team).find((q) => +q.t === shownT);
       return p?.v != null ? { team, p } : null;
     }).filter(Boolean) : [];
-    g.append('g').selectAll('circle').data(marks).join('circle')
+    plot.append('g').selectAll('circle').data(marks).join('circle')
       .attr('cx', (d) => x(d.p.t)).attr('cy', (d) => y(d.p.v)).attr('r', 4)
       .style('fill', (d) => `var(--s${state.highlight.get(d.team)})`)
       .style('stroke', 'var(--surface)').attr('stroke-width', 2);
@@ -1175,7 +1249,7 @@ footer b { color: var(--ink); font-weight: 600; }
       return d;
     };
     const full = state.highlight.size >= MAX_HIGHLIGHT;
-    g.append('g').selectAll('path').data(context).join('path')
+    plot.append('g').selectAll('path').data(context).join('path')
       .attr('class', 'hit').attr('d', ([team]) => flats(view.series.get(team)))
       .attr('fill', 'none').style('stroke', 'transparent').attr('stroke-width', 6).attr('pointer-events', 'stroke')
       .style('cursor', full ? 'not-allowed' : 'pointer')
@@ -1186,7 +1260,7 @@ footer b { color: var(--ink); font-weight: 600; }
     chart.hot = hot;
     hoverTeam = null;
 
-    const hover = g.append('g').attr('class', 'hover').style('display', 'none');
+    const hover = plot.append('g').attr('class', 'hover').style('display', 'none');
     hover.append('line').attr('class', 'cross')
       .attr('y1', margin.top).attr('y2', H - margin.bottom)
       .style('stroke', 'var(--ink-2)').attr('stroke-opacity', 0.6).attr('stroke-width', 1);
@@ -1196,6 +1270,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const names = focus.map(([team]) => team).join(', ');
     $('chart-desc').textContent = `Line chart of ${inSentence(m.title)} for ${view.series.size} teams from ${fmtDay.format(view.t0)} to ${fmtDay.format(view.t1)}.`
       + (names ? ` Highlighted: ${names}.` : '') + ' The standings table below lists the values.';
+    if (state.yRange) $('chart-desc').textContent += ` The Y-axis is fixed from ${m.fmt(state.yRange[0])} to ${m.fmt(state.yRange[1])}; values outside it are clipped.`;
   }
 
   // The overview strip shares the main chart's left and right margins, so the
@@ -1859,10 +1934,19 @@ footer b { color: var(--ink); font-weight: 600; }
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
         state[el.name] = el.value;
+        state.yRange = null;
         hideHover();
         renderAll();
         commit();
       });
+    });
+    $('fit-highlighted').addEventListener('click', fitHighlighted);
+    $('reset-y').addEventListener('click', () => {
+      if (!state.yRange) return;
+      state.yRange = null;
+      hideHover();
+      renderChart();
+      commit();
     });
     wireRange();
     // Shadow under the frozen title bar only once the page has scrolled.
