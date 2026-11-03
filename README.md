@@ -66,6 +66,11 @@ the address bar, so a copied link reproduces the view:
 - `duration`: the chart window's length, such as `7d`, `36h`, `3d4h13m` or
   `all` (absent: `30d`).
 - `utc_end`: where the window ends (absent: live, ending at the latest run).
+- `y_range`: fixed Y-axis bounds as `minimum,maximum` (absent: automatic).
+  **Fit highlighted** fits the highlighted teams in the current time window
+  with padding, then holds those bounds as the window or highlights change.
+  Values outside the bounds are clipped. Click it again to refit;
+  **Reset Y-axis**, or changing the metric or pool, restores automatic scaling.
 - `teams`: highlighted teams by colour; entry N is colour N, empty where that
   colour is free, so a link shows the same colours.
 - `metric`, `pool` (`combined`, `public`, `holdout`), `sort` (a table column:
@@ -76,3 +81,18 @@ the address bar, so a copied link reproduces the view:
 defaults, and `dir` when it is the column's usual direction. A link with parameters sets the whole view; only a bare link, such as
 the site's own address, restores the reader's saved view. Other parameters a
 shared link picks up (`utm_source`, `fbclid`) are left as they are.
+
+## Browser checks
+
+`tests/y-axis.cjs` exercises fitting, dragging the time window, resetting,
+keyboard controls, responsive layouts, and saved and shared bounds against
+the served CSV. It also intercepts the CSV request to test delayed loading,
+flat and missing values, zeroes, and percentage limits.
+
+With the local server running and Playwright's Chromium installed, run the
+following, setting `NODE_PATH` to the directory containing the `playwright`
+package:
+
+```sh
+NODE_PATH=/path/to/node_modules node tests/y-axis.cjs http://localhost:8000/
+```
