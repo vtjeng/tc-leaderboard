@@ -84,9 +84,26 @@ shared link picks up (`utm_source`, `fbclid`) are left as they are.
 
 ## Browser checks
 
-The standings rows animate into their new positions when you step between runs
-with the chart's arrow keys or pick a run on the chart. Reduced-motion preferences
-skip the animation. The Δ column compares each team's rank with the preceding
+The standings have first, previous, play/pause, next, and last controls at the
+top right. Click them, or focus the standings or chart and use the arrow keys,
+to step through runs in the chart window. Home and End jump to its first and
+last run; Escape restores the window's resting run. An unavailable direction
+stays focusable so you can reverse with the keyboard.
+
+Play advances one run every 800 ms and pauses at the window's end. Playing from
+the end restarts at the first run. Manual navigation, changing the window,
+metric, pool, or sort, and hiding the browser tab pause playback. The speed
+column reserves room for the startup + per-move expression, so changing a
+startup value from four digits to three does not shift the column boundaries.
+
+Rows move as opaque blocks. Holding an arrow waits for each visual change to
+finish; fresh presses can reverse immediately. Changed points, PRNG, sessions,
+and animation matches briefly tint green for increases and red for decreases
+relative to the outgoing view, including when ranks stay the same. Initial
+loads, unchanged displayed values, missing values, and pool switches stay
+neutral. Reduced-motion preferences skip movement and fading.
+
+The Δ column compares each team's rank with the preceding
 scoring run, using the current sort direction and pool. `new` means the team had
 no rank in that order in the preceding run; a dash means unchanged, unranked, or
 no preceding run. The comparison stays the same when you return to a run or
@@ -104,9 +121,16 @@ package:
 ```sh
 NODE_PATH=/path/to/node_modules node tests/y-axis.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/standings.cjs http://localhost:8000/
+NODE_PATH=/path/to/node_modules node tests/navigation.cjs http://localhost:8000/
 ```
 
 `tests/standings.cjs` checks keyboard stepping and rank changes against the served
 CSV. An intercepted CSV provides overtakes, an entering team, and missing scores
 to check animation, rapid reversals, sort and pool changes, focus, shared links,
 reduced motion, and responsive layouts.
+
+`tests/navigation.cjs` uses controlled scoring runs to check the table's arrow
+buttons, keyboard navigation, endpoints, playback, held-key pacing, green/red
+cell tints, unchanged ranks and scores, focus, scroll, and responsive button
+placement. The reported July 13 runs verify stable column widths on desktop
+and phone layouts when startup time changes from four digits to three.
