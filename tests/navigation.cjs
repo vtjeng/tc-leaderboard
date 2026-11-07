@@ -9,6 +9,28 @@ const shown = page => page.locator('#st-time').textContent();
 (async () => {
   const browser = await chromium.launch();
   try {
+    // Reproduce the reported July runs in PDT: startup time loses a digit.
+    const widths = await browser.newPage({ locale: 'en-US', timezoneId: 'America/Los_Angeles' });
+    await widths.goto(`${base}?teams=&duration=all&as_of=2026-07-14T03:37Z`);
+    await ready(widths);
+    await widths.evaluate(() => document.fonts.ready);
+    // Desktop and phone cover both stretched and horizontally scrolling tables.
+    for (const width of [1280, 390]) {
+      await widths.setViewportSize({ width, height: 900 });
+      const columns = () => widths.locator('#thead th').evaluateAll(cells => cells.map(cell => {
+        const { x, width } = cell.getBoundingClientRect();
+        return { x, width };
+      }));
+      const before = await columns();
+      assert.match(await shown(widths), /8:36 PM PDT/);
+      await widths.locator('#st-next').click();
+      assert.match(await shown(widths), /10:27 PM PDT/);
+      assert.deepEqual(await columns(), before, 'column boundaries hold when startup time changes from four digits to three');
+      await widths.locator('#st-prev').click();
+      assert.deepEqual(await columns(), before, 'reverse navigation preserves the same column boundaries');
+    }
+    await widths.close();
+
     // Desktop fits both the standings title and the two navigation buttons.
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const errors = [];
@@ -30,10 +52,14 @@ const shown = page => page.locator('#st-time').textContent();
     await page.goto(`${base}?teams=Alpha&duration=all`);
     const prev = page.getByRole('button', { name: 'Previous scoring run', exact: true });
     const next = page.getByRole('button', { name: 'Next scoring run', exact: true });
+    const start = page.getByRole('button', { name: 'First scoring run', exact: true });
+    const end = page.getByRole('button', { name: 'Last scoring run', exact: true });
+    const play = page.locator('#st-play');
     assert.equal(await prev.count(), 1, 'standings exposes a named previous button');
     assert.equal(await next.count(), 1, 'standings exposes a named next button');
     assert.equal(await prev.isDisabled(), true, 'navigation waits for data');
     assert.equal(await next.isDisabled(), true);
+    assert.equal(await play.isDisabled(), true, 'playback also waits for data');
     release();
     await ready(page);
     assert.equal(await page.locator('#tbody').evaluate(el => el.getAnimations({ subtree: true }).length), 0, 'initial load stays neutral');
@@ -109,6 +135,31 @@ const shown = page => page.locator('#st-time').textContent();
     await page.keyboard.press('End');
     assert.equal(await shown(page), latest);
     await settled(page);
+    await start.click();
+    assert.equal(await shown(page), first, 'start button reaches the first window run');
+    assert.equal(await start.getAttribute('aria-disabled'), 'true');
+    await play.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await play.getAttribute('aria-label'), 'Pause scoring runs');
+    // Two automatic steps traverse the three-run fixture and pause at its end.
+    await page.waitForFunction(expected => document.querySelector('#st-time').textContent === expected, middle);
+    await page.waitForFunction(() => document.querySelector('#st-play').getAttribute('aria-pressed') === 'false');
+    assert.equal(await shown(page), latest, 'playback stops at the last run');
+    assert.equal(await play.evaluate(el => el === document.activeElement), true, 'playback retains its control focus');
+    await play.click();
+    assert.equal(await shown(page), first, 'playing at the end restarts from the first run');
+    await play.click();
+    assert.equal(await play.getAttribute('aria-pressed'), 'false', 'play button also pauses');
+    await play.click();
+    await next.click();
+    assert.equal(await play.getAttribute('aria-pressed'), 'false', 'manual navigation pauses playback');
+    // Longer than one 800 ms playback interval, to catch an uncancelled timer.
+    await page.waitForTimeout(1000);
+    assert.equal(await shown(page), middle, 'paused playback cannot advance later');
+    await end.click();
+    assert.equal(await shown(page), latest, 'end button reaches the last window run');
+    assert.equal(await end.getAttribute('aria-disabled'), 'true');
+    await settled(page);
     assert.deepEqual(errors, []);
 
     // Reduced motion permits fast repeats because no row is still moving.
@@ -127,7 +178,9 @@ const shown = page => page.locator('#st-time').textContent();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       const title = await page.locator('#st-title').boundingBox();
       const nav = await page.locator('.st-nav').boundingBox();
-      assert.ok(nav.x >= title.x + title.width, 'controls remain to the right of the wrapped title');
+      assert.ok(nav.x >= title.x + title.width || nav.y >= title.y + title.height, 'controls wrap as one group without overlapping the title');
+      const head = await page.locator('.st-head').boundingBox();
+      assert.ok(Math.abs(nav.x + nav.width - head.x - head.width) < 1, 'controls remain aligned to the right edge'); // Subpixel rounding tolerance.
       assert.equal((await prev.boundingBox()).height, (await next.boundingBox()).height);
     }
     // A linked run beyond a frozen six-hour window must step into its end.
@@ -141,7 +194,12 @@ const shown = page => page.locator('#st-time').textContent();
     assert.equal(await shown(page), first);
     await page.keyboard.press('Escape');
     assert.equal(await shown(page), middle, 'Escape restores the frozen window end');
-    console.log('Navigation: delayed loading, click/keyboard stepping, endpoints, held-key motion, green/red cell tints, table focus, scroll, reduced motion, responsive controls, and frozen windows passed.');
+    await play.click();
+    assert.equal(await shown(page), first, 'frozen-window playback restarts at that window\'s first run');
+    await page.waitForFunction(() => document.querySelector('#st-play').getAttribute('aria-pressed') === 'false');
+    assert.equal(await shown(page), middle, 'playback stops at the frozen window end');
+    assert.deepEqual(errors, []);
+    console.log('Navigation: stable July column widths, delayed loading, click/keyboard stepping, endpoints, playback, held-key motion, green/red cell tints, table focus, scroll, reduced motion, responsive controls, and frozen windows passed.');
   } finally {
     await browser.close();
   }

@@ -322,9 +322,9 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 
 .standings { display: grid; gap: 0.6rem; min-width: 0; }
 .standings:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
-.st-head { display: flex; gap: 0.5rem 1rem; align-items: center; justify-content: space-between; }
-.st-head h2 { min-width: 0; }
-.st-nav { display: flex; gap: 0.35rem; flex-shrink: 0; }
+.st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; justify-content: space-between; }
+.st-head h2 { min-width: 0; flex: 1 1 auto; }
+.st-nav { display: flex; gap: 0.35rem; flex-shrink: 0; margin-left: auto; }
 .st-nav button { width: 44px; height: 44px; padding: 0; font-size: var(--step-1); }
 .table-scroll { overflow-x: auto; min-width: 0; overflow-anchor: none; }
 table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
@@ -352,6 +352,9 @@ td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-
    Speed, Playable) with either pool setting; the Total, Public and Held-out
    sub-columns inside a metric have none. */
 th.gstart, td.gstart { border-left: 1px solid var(--hairline); }
+/* Reserve the full startup + per-move expression so a lost startup digit
+   does not resize this column and redistribute the rest of the table. */
+th.speed, td.speed { width: 8rem; min-width: 8rem; }
 td.rank { color: var(--muted); width: 2.5rem; }
 th.rank-delta, td.rank-delta { width: 4.5rem; min-width: 4.5rem; }
 td.rank-delta { color: var(--muted); font-size: var(--step--2); }
@@ -497,8 +500,11 @@ footer b { color: var(--ink); font-weight: 600; }
     <div class="st-head">
       <h2 id="st-title">Standings at <span id="st-time">&hellip;</span></h2>
       <div class="st-nav" role="group" aria-label="Navigate scoring runs">
+        <button id="st-first" type="button" aria-label="First scoring run" title="First scoring run (Home)" disabled>⇤</button>
         <button id="st-prev" type="button" aria-label="Previous scoring run" title="Previous scoring run (←)" disabled>←</button>
+        <button id="st-play" type="button" aria-label="Play scoring runs" aria-pressed="false" title="Play scoring runs" disabled>▶</button>
         <button id="st-next" type="button" aria-label="Next scoring run" title="Next scoring run (→)" disabled>→</button>
+        <button id="st-last" type="button" aria-label="Last scoring run" title="Last scoring run (End)" disabled>⇥</button>
       </div>
     </div>
     <p class="sub" id="st-sub">Use ← / → to step between runs. Click a column header to sort; select a row to highlight that team in the chart. Δ compares ranks with the preceding run. Changed scores briefly tint green for an increase or red for a decrease.</p>
@@ -633,6 +639,7 @@ footer b { color: var(--ink); font-weight: 600; }
   let chart = null;     // scales from the last chart render, for hover
   let mini = null;      // the overview's elements and current scale, once drawn
   let hoverTeam = null; // team whose chart line is under the pointer
+  let playbackTimer = null;
   // pinned is the run the standings show (see pinnedIndex): a run's time
   // (epoch ms), 'end' for a frozen window's last run, or null to follow new
   // runs.
@@ -954,6 +961,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // has pinned a run; going live, it follows new runs again. A pin the reader
   // set elsewhere is never touched here.
   function setWindow(duration, end = null) {
+    stopPlayback();
     state.duration = duration;
     state.end = end;
     if (end == null) {
@@ -1393,6 +1401,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function onBrush({ selection, sourceEvent, type, mode }) {
     if (!sourceEvent || !mini) return;
     if (type === 'start') {
+      stopPlayback();
       // A press outside the window (or a Cmd-press inside it) starts a fresh
       // selection, which d3 begins at exactly zero width; a window, however
       // narrow, never is. A move of the whole window or a fresh selection can
@@ -1658,6 +1667,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // Names and speed read best ascending; everything else starts highest first.
   const firstDir = (key) => (key === 'team' || key === 'speed' ? 'asc' : 'desc');
   function setSort(key) {
+    stopPlayback();
     const current = sortKey([state.pool]);
     state.sort = { key, dir: key === current ? (state.sort.dir === 'asc' ? 'desc' : 'asc') : firstDir(key) };
     renderTable();
@@ -1720,7 +1730,7 @@ footer b { color: var(--ink); font-weight: 600; }
       }
     }
     top.append(
-      th('Speed', { cls: 'num gstart', sortAs: 'speed', rowspan: rs, title: 'Sort by ms per move' }),
+      th('Speed', { cls: 'num gstart speed', sortAs: 'speed', rowspan: rs, title: 'Sort by ms per move' }),
       th('Playable', { cls: 'gstart', rowspan: rs, sortAs: 'playable' }),
     );
     $('thead').replaceChildren(...(split ? [top, sub] : [top]));
@@ -1753,8 +1763,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const focusedControl = focused?.matches('a') ? 'a' : '.key';
     const focusedSort = focused?.closest('#thead button')?.dataset.key;
     $('st-time').textContent = fmtTime.format(snap.t);
-    $('st-prev').setAttribute('aria-disabled', String(runForKey('ArrowLeft') == null));
-    $('st-next').setAttribute('aria-disabled', String(runForKey('ArrowRight') == null));
+    renderRunControls();
     const pools = [state.pool];
     const key = sortKey(pools);
     renderHead(pools, key, snap);
@@ -1853,7 +1862,7 @@ footer b { color: var(--ink); font-weight: 600; }
         });
       }
       cell(r.speed_startup_ms == null ? '—'
-        : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed') + ' gstart');
+        : `${Math.round(r.speed_startup_ms)} + ${(r.speed_per_move_ms ?? 0).toFixed(2)}`, sortCls('speed') + ' gstart speed');
       const playTd = cell(null, 'gstart');
       if (r.playable != null) {
         const span = document.createElement('span');
@@ -1915,6 +1924,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   // Both the chart and standings controls navigate inside the chart window.
   // A linked run outside that window steps in from its nearer edge.
+  const RUN_BUTTONS = [['st-first', 'Home'], ['st-prev', 'ArrowLeft'], ['st-next', 'ArrowRight'], ['st-last', 'End']];
   function runForKey(key) {
     if (!view) return null;
     const end = view.i0 + view.visible.length - 1;
@@ -1924,9 +1934,48 @@ footer b { color: var(--ink); font-weight: 600; }
     return i != null && i >= view.i0 && i <= end ? i : null;
   }
 
+  function renderRunControls() {
+    const at = pinnedIndex() ?? snapshots.length - 1;
+    for (const [id, key] of RUN_BUTTONS) {
+      const i = runForKey(key);
+      $(id).setAttribute('aria-disabled', String(i == null || i === at));
+    }
+    const playing = playbackTimer != null;
+    const label = playing ? 'Pause scoring runs' : 'Play scoring runs';
+    const play = $('st-play');
+    play.textContent = playing ? 'Ⅱ' : '▶';
+    play.title = label;
+    play.setAttribute('aria-label', label);
+    play.setAttribute('aria-pressed', String(playing));
+    play.setAttribute('aria-disabled', String(!view || view.visible.length < 2));
+  }
+
+  function stopPlayback() {
+    if (playbackTimer == null) return;
+    clearInterval(playbackTimer);
+    playbackTimer = null;
+    renderRunControls();
+  }
+
+  function togglePlayback() {
+    if (playbackTimer != null) return stopPlayback();
+    if (!view || view.visible.length < 2) return;
+    // At the window's end, Play starts another pass from its first run.
+    if (runForKey('ArrowRight') == null) pin(view.i0);
+    // Leave time for the 480 ms score tint to finish before the next step.
+    playbackTimer = setInterval(() => {
+      const i = runForKey('ArrowRight');
+      if (i == null) return stopPlayback();
+      pin(i);
+      if (runForKey('ArrowRight') == null) stopPlayback();
+    }, 800);
+    renderRunControls();
+  }
+
   function navigateRuns(e) {
     if (!view || e.altKey || e.ctrlKey || e.metaKey || !['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(e.key)) return;
     e.preventDefault();
+    stopPlayback();
     // Holding an arrow waits for the current visual change to settle. Fresh
     // presses can still reverse immediately, and reduced motion has no delay.
     if (e.repeat && $('tbody').getAnimations({ subtree: true }).length) return;
@@ -2044,6 +2093,7 @@ footer b { color: var(--ink); font-weight: 600; }
   function wire() {
     document.querySelectorAll('.opts input').forEach((el) => {
       el.addEventListener('change', () => {
+        stopPlayback();
         state[el.name] = el.value;
         state.yRange = null;
         hideHover();
@@ -2053,8 +2103,11 @@ footer b { color: var(--ink); font-weight: 600; }
     });
     $('fit-highlighted').addEventListener('click', fitHighlighted);
     $('standings').addEventListener('keydown', navigateRuns);
-    for (const [id, key] of [['st-prev', 'ArrowLeft'], ['st-next', 'ArrowRight']]) {
+    $('st-play').addEventListener('click', togglePlayback);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) stopPlayback(); });
+    for (const [id, key] of RUN_BUTTONS) {
       $(id).addEventListener('click', () => {
+        stopPlayback();
         const i = runForKey(key);
         if (i != null) pin(i);
       });
@@ -2082,6 +2135,7 @@ footer b { color: var(--ink); font-weight: 600; }
     });
     node.addEventListener('click', (e) => {
       if (!chart) return;
+      stopPlayback();
       pin(view.i0 + nearestIndex(d3.pointer(e, node)[0]));
       showHover((pinnedIndex() ?? snapshots.length - 1) - view.i0);
     });

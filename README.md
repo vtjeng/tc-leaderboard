@@ -84,11 +84,17 @@ shared link picks up (`utm_source`, `fbclid`) are left as they are.
 
 ## Browser checks
 
-The standings have previous/next arrows at the top right. Click them, or focus
-the standings or chart and use the arrow keys, to step through runs in the chart
-window. Home and End jump to its first and last run; Escape restores the window's
-resting run. An unavailable direction stays focusable so you can reverse with
-the keyboard.
+The standings have first, previous, play/pause, next, and last controls at the
+top right. Click them, or focus the standings or chart and use the arrow keys,
+to step through runs in the chart window. Home and End jump to its first and
+last run; Escape restores the window's resting run. An unavailable direction
+stays focusable so you can reverse with the keyboard.
+
+Play advances one run every 800 ms and pauses at the window's end. Playing from
+the end restarts at the first run. Manual navigation, changing the window,
+metric, pool, or sort, and hiding the browser tab pause playback. The speed
+column reserves room for the startup + per-move expression, so changing a
+startup value from four digits to three does not shift the column boundaries.
 
 Rows move as opaque blocks. Holding an arrow waits for each visual change to
 finish; fresh presses can reverse immediately. Changed points, PRNG, sessions,
@@ -124,5 +130,7 @@ to check animation, rapid reversals, sort and pool changes, focus, shared links,
 reduced motion, and responsive layouts.
 
 `tests/navigation.cjs` uses controlled scoring runs to check the table's arrow
-buttons, keyboard navigation, endpoints, held-key pacing, green/red cell tints,
-unchanged ranks and scores, focus, scroll, and responsive button placement.
+buttons, keyboard navigation, endpoints, playback, held-key pacing, green/red
+cell tints, unchanged ranks and scores, focus, scroll, and responsive button
+placement. The reported July 13 runs verify stable column widths on desktop
+and phone layouts when startup time changes from four digits to three.
