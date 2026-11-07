@@ -152,7 +152,7 @@ body.loading .opts, body.loading .range-row, body.load-failed .opts, body.load-f
 body.loading .controls { cursor: progress; }
 .seg-range { margin-left: auto; }
 .y-actions { display: flex; gap: 0.35rem; }
-.y-actions button {
+.y-actions button, .st-nav button {
   padding: 0.45rem 0.65rem;
   border: 1px solid var(--hairline);
   border-radius: 7px;
@@ -163,10 +163,12 @@ body.loading .controls { cursor: progress; }
   white-space: nowrap;
   cursor: pointer;
 }
-.y-actions button:disabled, .y-actions button[aria-disabled="true"] { opacity: 0.55; cursor: default; }
-.y-actions button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.y-actions button:disabled, .y-actions button[aria-disabled="true"],
+.st-nav button:disabled, .st-nav button[aria-disabled="true"] { opacity: 0.55; cursor: default; }
+.y-actions button:focus-visible, .st-nav button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 @media (hover: hover) {
-  .y-actions button:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--wash); }
+  .y-actions button:hover:not(:disabled):not([aria-disabled="true"]),
+  .st-nav button:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--wash); }
 }
 .range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .sentinel { height: 0; }
@@ -319,7 +321,11 @@ h2 { font-size: var(--step-1); font-weight: 600; line-height: 1.3; text-wrap: ba
 .mini .grip { pointer-events: none; }
 
 .standings { display: grid; gap: 0.6rem; min-width: 0; }
-.st-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: baseline; justify-content: space-between; }
+.standings:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+.st-head { display: flex; gap: 0.5rem 1rem; align-items: center; justify-content: space-between; }
+.st-head h2 { min-width: 0; }
+.st-nav { display: flex; gap: 0.35rem; flex-shrink: 0; }
+.st-nav button { width: 44px; height: 44px; padding: 0; font-size: var(--step-1); }
 .table-scroll { overflow-x: auto; min-width: 0; overflow-anchor: none; }
 table { width: 100%; border-collapse: collapse; font-size: var(--step--1); }
 th, td { padding: 0.45rem 0.5rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--hairline); }
@@ -356,8 +362,11 @@ td.team a { text-decoration: none; }
 td.team a:hover { text-decoration: underline; }
 td.team a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 2px; }
 td.team .cat { color: var(--muted); font-size: var(--step--2); margin-left: 0.4rem; }
-tbody tr { cursor: pointer; }
-tbody tr:hover { background: var(--wash); }
+/* Opaque row backgrounds keep the whole row legible as teams pass each other. */
+tbody tr { cursor: pointer; background: var(--bg); }
+@media (hover: hover) {
+  tbody tr:hover { background: color-mix(in srgb, var(--ink) 5%, var(--bg)); }
+}
 .key {
   display: grid;
   place-items: center;
@@ -484,11 +493,15 @@ footer b { color: var(--ink); font-weight: 600; }
     </ul>
   </section>
 
-  <section class="standings" aria-labelledby="st-title">
+  <section class="standings" id="standings" tabindex="0" aria-labelledby="st-title" aria-describedby="st-sub">
     <div class="st-head">
       <h2 id="st-title">Standings at <span id="st-time">&hellip;</span></h2>
+      <div class="st-nav" role="group" aria-label="Navigate scoring runs">
+        <button id="st-prev" type="button" aria-label="Previous scoring run" title="Previous scoring run (←)" disabled>←</button>
+        <button id="st-next" type="button" aria-label="Next scoring run" title="Next scoring run (→)" disabled>→</button>
+      </div>
     </div>
-    <p class="sub" id="st-sub">Click a column header to sort; select a row to highlight that team in the chart. Δ shows the rank change since the preceding run, in this sort order.</p>
+    <p class="sub" id="st-sub">Use ← / → to step between runs. Click a column header to sort; select a row to highlight that team in the chart. Δ compares ranks with the preceding run. Changed scores briefly tint green for an increase or red for a decrease.</p>
     <div class="table-scroll">
       <table id="table">
         <thead id="thead"></thead>
@@ -1729,6 +1742,8 @@ footer b { color: var(--ink); font-weight: 600; }
     const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     const tbody = $('tbody');
+    const oldScores = new Map([...tbody.rows].map(tr => [tr.dataset.team,
+      new Map([...tr.querySelectorAll('[data-score]')].map(td => [td.dataset.score, td.dataset.value]))]));
     // Read the displayed positions before replacing rows. During a quick
     // reversal these include the unfinished animation, so motion continues
     // from where the reader sees the team rather than its last destination.
@@ -1738,6 +1753,8 @@ footer b { color: var(--ink); font-weight: 600; }
     const focusedControl = focused?.matches('a') ? 'a' : '.key';
     const focusedSort = focused?.closest('#thead button')?.dataset.key;
     $('st-time').textContent = fmtTime.format(snap.t);
+    $('st-prev').setAttribute('aria-disabled', String(runForKey('ArrowLeft') == null));
+    $('st-next').setAttribute('aria-disabled', String(runForKey('ArrowRight') == null));
     const pools = [state.pool];
     const key = sortKey(pools);
     renderHead(pools, key, snap);
@@ -1814,8 +1831,24 @@ footer b { color: var(--ink); font-weight: 600; }
         pools.forEach((pool, k) => {
           const v = METRICS[g.metric].value(r, pool);
           const td = cell(v == null || Number.isNaN(v) ? '—' : METRICS[g.metric].fmt(v), sortCls(`${g.col}-${pool}`));
+          td.dataset.score = `${g.col}-${pool}`;
+          td.dataset.value = Number.isFinite(v) ? String(v) : '';
+          const previous = oldScores.get(r.team)?.get(td.dataset.score);
+          // Compare the same team's same metric and pool in the outgoing view.
+          // Initial loads, missing scores, and pool switches have no comparison.
+          if (previous != null && previous !== '' && Number.isFinite(v)
+              && METRICS[g.metric].fmt(Number(previous)) !== td.textContent) {
+            const direction = v > Number(previous) ? 'increase' : 'decrease';
+            td.title = `Score ${direction}: ${METRICS[g.metric].fmt(Number(previous))} → ${METRICS[g.metric].fmt(v)}`;
+            if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+              td.animate([
+                { backgroundColor: `color-mix(in srgb, var(--${direction === 'increase' ? 'good' : 'bad'}) 18%, var(--bg))` },
+                { backgroundColor: 'transparent' },
+              ], { duration: 480, easing: 'ease-out' });
+            }
+          }
           const max = groupMax(snap, g, pool);
-          if (max && v != null && !Number.isNaN(v)) td.title = `${fmtInt(v)} of ${fmtInt(max)} (${fmtPct((v / max) * 100)})`;
+          if (max && v != null && !Number.isNaN(v)) td.title = (td.title ? td.title + '\n' : '') + `${fmtInt(v)} of ${fmtInt(max)} (${fmtPct((v / max) * 100)})`;
           if (k === 0) td.classList.add('gstart');
         });
       }
@@ -1880,12 +1913,40 @@ footer b { color: var(--ink); font-weight: 600; }
     writeUrl();
   }
 
+  // Both the chart and standings controls navigate inside the chart window.
+  // A linked run outside that window steps in from its nearer edge.
+  function runForKey(key) {
+    if (!view) return null;
+    const end = view.i0 + view.visible.length - 1;
+    const at = Math.max(view.i0 - 1, Math.min(end + 1, pinnedIndex() ?? snapshots.length - 1));
+    const i = key === 'ArrowLeft' ? at - 1 : key === 'ArrowRight' ? at + 1
+      : key === 'Home' ? view.i0 : key === 'End' ? end : null;
+    return i != null && i >= view.i0 && i <= end ? i : null;
+  }
+
+  function navigateRuns(e) {
+    if (!view || e.altKey || e.ctrlKey || e.metaKey || !['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(e.key)) return;
+    e.preventDefault();
+    // Holding an arrow waits for the current visual change to settle. Fresh
+    // presses can still reverse immediately, and reduced motion has no delay.
+    if (e.repeat && $('tbody').getAnimations({ subtree: true }).length) return;
+    if (e.key === 'Escape') {
+      pin(state.end == null ? null : runAsOf(state.end));
+    } else {
+      const i = runForKey(e.key);
+      if (i != null) pin(i);
+    }
+    const shown = pinnedIndex() ?? snapshots.length - 1;
+    if (e.currentTarget === svg.node() && shown >= view.i0 && shown <= view.i0 + view.visible.length - 1) showHover(shown - view.i0);
+    else hideHover();
+  }
+
   // The controls wait for the data (the HTML starts them disabled): until
   // then the link or saved view has
   // not been applied, and a change would be lost.
   function setControlsEnabled(on) {
     document.body.classList.toggle('loading', !on);
-    document.querySelectorAll('.opts input, #range').forEach((el) => { el.disabled = !on; });
+    document.querySelectorAll('.opts input, #range, .st-nav button').forEach((el) => { el.disabled = !on; });
   }
 
   // The range menu: a button that opens two groups of radio buttons, the
@@ -1991,6 +2052,13 @@ footer b { color: var(--ink); font-weight: 600; }
       });
     });
     $('fit-highlighted').addEventListener('click', fitHighlighted);
+    $('standings').addEventListener('keydown', navigateRuns);
+    for (const [id, key] of [['st-prev', 'ArrowLeft'], ['st-next', 'ArrowRight']]) {
+      $(id).addEventListener('click', () => {
+        const i = runForKey(key);
+        if (i != null) pin(i);
+      });
+    }
     $('reset-y').addEventListener('click', () => {
       if (!state.yRange) return;
       state.yRange = null;
@@ -2017,44 +2085,7 @@ footer b { color: var(--ink); font-weight: 600; }
       pin(view.i0 + nearestIndex(d3.pointer(e, node)[0]));
       showHover((pinnedIndex() ?? snapshots.length - 1) - view.i0);
     });
-    node.addEventListener('keydown', (e) => {
-      if (!view) return;
-      const last = snapshots.length - 1;
-      const end = view.i0 + view.visible.length - 1;
-      if (e.key === 'Escape') {
-        // Back to where the page rests: a frozen window's last run, or
-        // following new runs in a live one. Already there, there is nothing
-        // to do.
-        const home = state.end == null ? null : runAsOf(state.end);
-        if (home == null ? state.pinned == null : state.pinned === 'end') {
-          hideHover();
-          return;
-        }
-        e.preventDefault();
-        pin(home);
-        const shown = home ?? last;
-        if (shown >= view.i0 && shown <= end) showHover(shown - view.i0);
-        else hideHover();
-        return;
-      }
-      // The table's run may lie outside the window (or be the latest run,
-      // after its end); the arrows then step in from the nearer edge.
-      const at = Math.max(view.i0 - 1, Math.min(end + 1, pinnedIndex() ?? last));
-      let i;
-      if (e.key === 'ArrowLeft') i = at - 1;
-      else if (e.key === 'ArrowRight') i = at + 1;
-      else if (e.key === 'Home') i = view.i0;
-      else if (e.key === 'End') i = end;
-      else return;
-      e.preventDefault(); // the chart has these keys, so the page does not scroll
-      if (i < view.i0 || i > end) {
-        // At the edge: show where the standings are, if that is in view.
-        if (at >= view.i0 && at <= end) showHover(at - view.i0);
-        return;
-      }
-      pin(i);
-      showHover((pinnedIndex() ?? last) - view.i0);
-    });
+    node.addEventListener('keydown', navigateRuns);
     node.addEventListener('blur', hideHover);
     // A mouse drag's end can go missing (a release outside the frame). One
     // still open after the mouse is released, or while it moves with no
