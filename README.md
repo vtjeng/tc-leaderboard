@@ -84,6 +84,14 @@ shared link picks up (`utm_source`, `fbclid`) are left as they are.
 
 ## Browser checks
 
+The standings rows animate into their new positions when you step between runs
+with the chart's arrow keys or pick a run on the chart. Reduced-motion preferences
+skip the animation. The Δ column compares each team's rank with the preceding
+scoring run, using the current sort direction and pool. `new` means the team had
+no rank in that order in the preceding run; a dash means unchanged, unranked, or
+no preceding run. The comparison stays the same when you return to a run or
+share its link.
+
 `tests/y-axis.cjs` exercises fitting, dragging the time window, resetting,
 keyboard controls, responsive layouts, and saved and shared bounds against
 the served CSV. It also intercepts the CSV request to test delayed loading,
@@ -95,4 +103,10 @@ package:
 
 ```sh
 NODE_PATH=/path/to/node_modules node tests/y-axis.cjs http://localhost:8000/
+NODE_PATH=/path/to/node_modules node tests/standings.cjs http://localhost:8000/
 ```
+
+`tests/standings.cjs` checks keyboard stepping and rank changes against the served
+CSV. An intercepted CSV provides overtakes, an entering team, and missing scores
+to check animation, rapid reversals, sort and pool changes, focus, shared links,
+reduced motion, and responsive layouts.
