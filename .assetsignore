@@ -1,5 +1,3 @@
-# Publish only the page and its data; everything else in the repo stays private.
+# Publish only the page; it reads data directly from GitHub.
 *
 !index.html
-!data/
-!data/leaderboard.csv

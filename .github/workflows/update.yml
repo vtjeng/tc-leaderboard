@@ -5,8 +5,8 @@ on:
     # Every 15 minutes, off the hour. GitHub runs scheduled workflows on a
     # best-effort basis and skipped 5 of the first 6 hourly slots, so more
     # slots make a long gap less likely. A run that finds no new judge run
-    # commits nothing. Each data commit to main redeploys the site through
-    # Cloudflare Workers Builds (wrangler.toml).
+    # commits nothing. Hosted dashboards read this CSV directly from GitHub,
+    # so new data does not depend on Cloudflare deploying the dashboard.
     - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 

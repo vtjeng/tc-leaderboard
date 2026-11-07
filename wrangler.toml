@@ -1,5 +1,6 @@
-# Static site on Cloudflare Workers: serves index.html and data/ as they are.
-# Cloudflare Workers Builds runs `npx wrangler deploy` on every push to main.
+# Static site on Cloudflare Workers: serves index.html, which reads GitHub's CSV.
+# Workers Builds runs `npx wrangler deploy` on main. To skip CSV-only builds,
+# exclude data/leaderboard.csv in the integration's build watch paths.
 name = "tc-leaderboard"
 compatibility_date = "2026-10-01"
 preview_urls = true

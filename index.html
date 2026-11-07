@@ -543,7 +543,11 @@ footer b { color: var(--ink); font-weight: 600; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script>
 (() => {
-  const CSV_URL = 'data/leaderboard.csv';
+  // Hosted dashboards read GitHub directly so data commits need no deployment.
+  // Local development and browser checks use the checked-in CSV.
+  const CSV_URL = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
+    ? 'data/leaderboard.csv'
+    : 'https://raw.githubusercontent.com/vtjeng/tc-leaderboard/main/data/leaderboard.csv';
   // The leaderboard's sparkline starts here; the two scoring schemes before
   // it produced point totals that are not comparable with the current one.
   const RULES_CUTOFF = Date.parse('2026-05-05T23:55:00Z');
@@ -2181,14 +2185,15 @@ footer b { color: var(--ink); font-weight: 600; }
     }).observe(chartEl);
   }
 
-  // The workflow looks for a new judge run every 15 minutes, and an open page
-  // re-reads the CSV every hour. It redraws only when a new run has arrived,
-  // which keeps the reader's metric, window, highlights and pinned run in
-  // place.
-  const REFRESH_MS = 60 * 60 * 1000;
+  // The workflow looks for a new judge run every 15 minutes. Revalidate the
+  // CSV every five minutes and on return to the tab, preserving the reader's
+  // metric, window, highlights and pinned run when new data arrives.
+  const REFRESH_MS = 5 * 60 * 1000;
+  let refreshing = false;
 
   async function loadSnapshots() {
-    const rows = await d3.csv(CSV_URL, { cache: 'no-store' }, d3.autoType);
+    // Revalidate cached responses so unchanged CSVs need no body download.
+    const rows = await d3.csv(CSV_URL, { cache: 'no-cache' }, d3.autoType);
     const runs = d3.group(rows.filter((r) => +r.snapshot_ts >= RULES_CUTOFF), (r) => +r.snapshot_ts);
     return [...runs].sort((a, b) => a[0] - b[0]).map(([t, rs]) => ({
       t: new Date(t),
@@ -2217,6 +2222,8 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
     try {
       const next = await loadSnapshots();
       // (Data waiting on a drag stays unless newer replaces it.)
@@ -2233,6 +2240,8 @@ footer b { color: var(--ink); font-weight: 600; }
       }
     } catch {
       // Keep showing the data already loaded; the next tick tries again.
+    } finally {
+      refreshing = false;
     }
     renderLatestRun();
   }
@@ -2263,6 +2272,8 @@ footer b { color: var(--ink); font-weight: 600; }
     writeUrl();
     setControlsEnabled(true);
     setInterval(refresh, REFRESH_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    window.addEventListener('focus', refresh);
   }
 
   main();

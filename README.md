@@ -44,12 +44,21 @@ immediately, run `gh workflow run update.yml`.
 
 ## Dashboard
 
-`index.html` loads the CSV and charts one metric per team over time. Cloudflare
-Workers Builds deploys it to <https://tc-leaderboard.vtjeng.com/> on every push
-to `main`, data updates included (`wrangler.toml`). The Worker serves only the
-files `.assetsignore` allows, so a new file the page loads must be added there.
+`index.html` loads the CSV directly from GitHub's `main` branch and charts one
+metric per team over time. Data updates need no dashboard deployment. The page
+checks for new data every five minutes and when the reader returns to the tab
+or window. Conditional requests reuse the cached CSV when it has not changed.
+GitHub's raw-file response currently advertises a five-minute cache lifetime,
+so even a hard refresh does not guarantee an immediate update after a commit.
+
+Cloudflare Workers Builds deploys the page to
+<https://tc-leaderboard.vtjeng.com/> on pushes to `main` (`wrangler.toml`). To
+skip CSV-only deployments, configure the Cloudflare Git integration's build
+watch paths to include `*` and exclude `data/leaderboard.csv`. The Worker serves
+only the files `.assetsignore` allows, so a new file the page loads must be
+added there.
 To view it locally, serve this folder over HTTP and open
-<http://localhost:8000/>:
+<http://localhost:8000/>; localhost uses the checked-in CSV:
 
 ```sh
 python3 -m http.server
@@ -122,6 +131,7 @@ package:
 NODE_PATH=/path/to/node_modules node tests/y-axis.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/standings.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/navigation.cjs http://localhost:8000/
+NODE_PATH=/path/to/node_modules node tests/refresh.cjs
 ```
 
 `tests/standings.cjs` checks keyboard stepping and rank changes against the served
@@ -134,3 +144,7 @@ buttons, keyboard navigation, endpoints, playback, held-key pacing, green/red
 cell tints, unchanged ranks and scores, focus, scroll, and responsive button
 placement. The reported July 13 runs verify stable column widths on desktop
 and phone layouts when startup time changes from four digits to three.
+
+`tests/refresh.cjs` starts its own HTTP server to check conditional CSV requests,
+five-minute polling, return-to-tab refreshes, overlapping requests, retained
+selections and focus, and recovery after a failed refresh.
