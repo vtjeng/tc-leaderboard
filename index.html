@@ -561,6 +561,11 @@ footer b { color: var(--ink); font-weight: 600; }
 
   const fmtInt = d3.format(',');
   const fmtPct = (v) => v.toFixed(1) + '%';
+  const fmtPrng = (v) => {
+    const rounded = v.toFixed(3);
+    // Reserve 100.000% for a perfect match, including weighted pool values.
+    return (v < 100 && rounded === '100.000' ? '<' : '') + rounded + '%';
+  };
   const fmtTime = new Intl.DateTimeFormat(undefined, {
     month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
   });
@@ -583,7 +588,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   const METRICS = {
     points: { title: 'Points', col: 'points', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'points') },
-    prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPct, domain: [0, 100], tick: (v) => v + '%', value: prngPct },
+    prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPrng, domain: [0, 100], tick: (v) => v + '%', value: prngPct },
     sessions: { title: 'Sessions matched', col: 'sessions', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'passing') },
     anim: { title: 'Animation frames matched', col: 'anim', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'anim_matched') },
     startup: { title: 'Startup time', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => fmtInt(Math.round(v)) + ' ms', tick: (v) => fmtInt(v), value: (r) => r.speed_startup_ms },
