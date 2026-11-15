@@ -80,6 +80,14 @@ the address bar, so a copied link reproduces the view:
   with padding, then holds those bounds as the window or highlights change.
   Values outside the bounds are clipped. Click it again to refit;
   **Reset Y-axis**, or changing the metric or pool, restores automatic scaling.
+- `display`: `remaining` shows unmatched Points, PRNG, Sessions, and Anim in
+  both the chart and standings; absent or `matched` shows matched values.
+  The global Matched/Remaining switch converts fixed bounds (98–100% PRNG
+  matched becomes 0–2% remaining). Counts use the largest maximum in the chart's
+  time window as the conversion reference; each plotted value and table cell
+  uses its own run's maximum. Automatic scaling stays automatic. Timings and
+  playability stay unchanged. Score sorts start with fewest remaining, and
+  switching views reverses their direction to preserve that choice.
 - `teams`: highlighted teams by colour; entry N is colour N, empty where that
   colour is free, so a link shows the same colours.
 - `metric`, `pool` (`combined`, `public`, `holdout`), `sort` (a table column:
@@ -107,10 +115,11 @@ startup value from four digits to three does not shift the column boundaries.
 
 Rows move as opaque blocks. Holding an arrow waits for each visual change to
 finish; fresh presses can reverse immediately. Changed points, PRNG, sessions,
-and animation matches briefly tint green for increases and red for decreases
+and animation matches briefly tint green for improvements and red for regressions
 relative to the outgoing view, including when ranks stay the same. Initial
 loads, unchanged displayed values, missing values, and pool switches stay
-neutral. Reduced-motion preferences skip movement and fading.
+neutral, as do Matched/Remaining switches. Reduced-motion preferences skip
+movement and fading.
 
 The Δ column compares each team's rank with the preceding
 scoring run, using the current sort direction and pool. `new` means the team had
@@ -132,6 +141,7 @@ NODE_PATH=/path/to/node_modules node tests/y-axis.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/standings.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/navigation.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/refresh.cjs
+NODE_PATH=/path/to/node_modules node tests/remaining.cjs http://localhost:8000/
 ```
 
 `tests/standings.cjs` checks keyboard stepping and rank changes against the served
@@ -148,3 +158,8 @@ and phone layouts when startup time changes from four digits to three.
 `tests/refresh.cjs` starts its own HTTP server to check conditional CSV requests,
 five-minute polling, return-to-tab refreshes, overlapping requests, retained
 selections and focus, and recovery after a failed refresh.
+
+`tests/remaining.cjs` checks remaining values in the chart and standings,
+fitted bounds, weighted pools, sorting, score tints, missing values, tiny
+remainders, saved views, shared links, keyboard controls, and responsive
+layouts with an intercepted CSV.
