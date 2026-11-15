@@ -119,6 +119,7 @@ h1 {
 .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: end; }
 .controls .opts { flex-wrap: wrap; }
 .seg { display: grid; gap: 0.35rem; min-width: 0; }
+.seg[hidden] { display: none; }
 .seg-label, .col-label {
   font: 500 var(--step--2)/1 var(--font-data);
   text-transform: uppercase;
@@ -440,6 +441,13 @@ footer b { color: var(--ink); font-weight: 600; }
           <label><input type="radio" disabled name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
         </div>
       </div>
+      <div class="seg" role="radiogroup" aria-labelledby="l-prng-view" id="prng-view" hidden>
+        <span class="seg-label" id="l-prng-view">PRNG chart</span>
+        <div class="opts">
+          <label><input type="radio" disabled name="prngView" id="prng-matched" value="matched"><span>Matched</span></label>
+          <label><input type="radio" disabled name="prngView" id="prng-remaining" value="remaining"><span>Remaining</span></label>
+        </div>
+      </div>
       <div class="seg" role="group" aria-labelledby="l-y-axis">
         <span class="seg-label" id="l-y-axis">Y-axis <span id="y-status" role="status">· automatic</span></span>
         <div class="y-actions">
@@ -594,6 +602,19 @@ footer b { color: var(--ink); font-weight: 600; }
     startup: { title: 'Startup time', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => fmtInt(Math.round(v)) + ' ms', tick: (v) => fmtInt(v), value: (r) => r.speed_startup_ms },
     permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
   };
+  function chartMetric() {
+    const metric = METRICS[state.metric];
+    if (state.metric !== 'prng' || state.prngView !== 'remaining') return metric;
+    return {
+      ...metric, title: 'PRNG remaining', lowerIsBetter: true,
+      // Do not display a small nonzero remainder as a perfect zero.
+      fmt: (v) => (v > 0 && v.toFixed(3) === '0.000' ? '<0.001%' : fmtPrng(v)),
+      value: (r, pool) => {
+        const matched = metric.value(r, pool);
+        return matched == null ? null : 100 - matched;
+      },
+    };
+  }
   const POOL_TEXT = { combined: 'public + held-out sessions', pub: 'public sessions', held: 'held-out sessions' };
   // The range menu's presets, as window durations (null: all history).
   const DURATIONS = { all: null, d90: 90 * DAY_MS, d30: 30 * DAY_MS, d7: 7 * DAY_MS };
@@ -664,7 +685,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // The pinned run need not be inside it.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
-  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', sort: { key: 'points-combined', dir: 'desc' } };
+  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', prngView: 'matched', sort: { key: 'points-combined', dir: 'desc' } };
   const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null, yRange: null };
 
   // Object.hasOwn needs Safari 15.4.
@@ -697,6 +718,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
+    if (saved.prngView === 'matched' || saved.prngView === 'remaining') state.prngView = saved.prngView;
     if (Array.isArray(saved.yRange) && saved.yRange.length === 2
         && saved.yRange.every(Number.isFinite) && saved.yRange[0] < saved.yRange[1]
         && Number.isFinite(saved.yRange[1] - saved.yRange[0])) state.yRange = [...saved.yRange];
@@ -789,7 +811,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // keeping their own saved view until then.
   let lastForm = null;
   const savedForm = () => JSON.stringify({
-    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, sort: state.sort, highlight: [...state.highlight], yRange: state.yRange,
+    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, prngView: state.prngView, sort: state.sort, highlight: [...state.highlight], yRange: state.yRange,
   });
   function save() {
     const form = savedForm();
@@ -822,7 +844,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // add to a shared link (utm_source, fbclid, from=...); those are kept as
   // they are. A value of ours that makes no sense falls back to its default.
   // Opening a link does not overwrite the saved view; the next change does.
-  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir', 'y_range'];
+  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir', 'y_range', 'prng_view'];
   // Rounded up: a run at 13:45:39 is written 13:46, at or after it.
   const isoMinute = (ms) => new Date(ceilMinute(ms)).toISOString().slice(0, 16) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
@@ -865,7 +887,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const word = (k) => params.get(k)?.toLowerCase();
     // The CSV's own pool names (pub, held) are accepted too, as in sort.
     const pool = word('pool');
-    const linked = { metric: word('metric'), pool: poolFromUrl(pool), asOf: parseUtc(params.get('as_of')) };
+    const linked = { metric: word('metric'), pool: poolFromUrl(pool), prngView: word('prng_view'), asOf: parseUtc(params.get('as_of')) };
     if (params.has('duration')) linked.duration = parseDuration(word('duration'));
     if (params.has('utc_end')) linked.end = parseUtc(params.get('utc_end'));
     if (params.has('y_range')) linked.yRange = params.get('y_range').split(',').map((v) => v.trim() ? Number(v) : NaN);
@@ -925,6 +947,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (state.end != null) put('utc_end', isoMinute(state.end));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', POOL_URL[state.pool]);
+    if (state.prngView !== DEFAULTS.prngView) put('prng_view', state.prngView);
     if (state.yRange) put('y_range', state.yRange.join(','));
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
       put('sort', sortToUrl(state.sort.key));
@@ -1043,7 +1066,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function computeView() {
-    const metric = METRICS[state.metric];
+    const metric = chartMetric();
     const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
     const teams = new Set();
@@ -1063,9 +1086,10 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function renderFilters() {
-    for (const name of ['metric', 'pool']) {
+    for (const name of ['metric', 'pool', 'prngView']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
+    $('prng-view').hidden = state.metric !== 'prng';
     // The range menu: the window's duration (a preset, or Custom with a
     // dragged, typed or linked one filled in), and where it ends.
     const preset = Object.keys(DURATIONS).find((k) => DURATIONS[k] === state.duration);
@@ -2110,7 +2134,10 @@ footer b { color: var(--ink); font-weight: 600; }
       el.addEventListener('change', () => {
         stopPlayback();
         state[el.name] = el.value;
-        state.yRange = null;
+        if (el.name === 'prngView') {
+          // Reflect the fixed interval so the same scores remain in view.
+          if (state.yRange) state.yRange = [100 - state.yRange[1], 100 - state.yRange[0]];
+        } else state.yRange = null;
         hideHover();
         renderAll();
         commit();

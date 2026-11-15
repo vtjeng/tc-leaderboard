@@ -80,6 +80,11 @@ the address bar, so a copied link reproduces the view:
   with padding, then holds those bounds as the window or highlights change.
   Values outside the bounds are clipped. Click it again to refit;
   **Reset Y-axis**, or changing the metric or pool, restores automatic scaling.
+- `prng_view`: `remaining` charts the unmatched share of PRNG calls; absent or
+  `matched` charts the matched share. The PRNG chart's Matched/Remaining switch
+  converts fixed bounds to the same interval in the other view (98–100% matched
+  becomes 0–2% remaining). Automatic scaling stays automatic. The standings
+  continue to show matched scores.
 - `teams`: highlighted teams by colour; entry N is colour N, empty where that
   colour is free, so a link shows the same colours.
 - `metric`, `pool` (`combined`, `public`, `holdout`), `sort` (a table column:
@@ -132,6 +137,7 @@ NODE_PATH=/path/to/node_modules node tests/y-axis.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/standings.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/navigation.cjs http://localhost:8000/
 NODE_PATH=/path/to/node_modules node tests/refresh.cjs
+NODE_PATH=/path/to/node_modules node tests/remaining.cjs http://localhost:8000/
 ```
 
 `tests/standings.cjs` checks keyboard stepping and rank changes against the served
@@ -148,3 +154,7 @@ and phone layouts when startup time changes from four digits to three.
 `tests/refresh.cjs` starts its own HTTP server to check conditional CSV requests,
 five-minute polling, return-to-tab refreshes, overlapping requests, retained
 selections and focus, and recovery after a failed refresh.
+
+`tests/remaining.cjs` checks PRNG complements, fitted bounds, weighted pools,
+missing values, tiny remainders, saved views, shared links, keyboard controls,
+and responsive layouts with an intercepted CSV.
