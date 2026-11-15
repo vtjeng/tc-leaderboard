@@ -98,8 +98,7 @@ h1 {
 .dek { color: var(--ink-2); }
 .updated { color: var(--muted); font: 400 var(--step--1) var(--font-data); }
 
-/* The title bar is frozen: Pool is the one control that applies to the whole
-   page, so it stays within reach while the standings scroll. */
+/* Global controls stay within reach while the standings scroll. */
 .topbar {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.6rem 1.25rem;
   position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
@@ -110,7 +109,7 @@ h1 {
 @media (min-width: 40rem) { .topbar { margin-inline: -2rem; padding-inline: 2rem; } }
 .topbar.is-stuck { border-bottom-color: var(--hairline); box-shadow: 0 6px 12px -10px rgba(0, 0, 0, 0.25); }
 .topbar .seg { grid-template-columns: auto auto; align-items: center; gap: 0.6rem; }
-/* Phones: a smaller one-line title over the pool switch keeps the frozen bar short. */
+/* Phones: a smaller one-line title leaves room for the global switches. */
 @media (max-width: 39.99rem) {
   .topbar { padding-block: 0.45rem; gap: 0.35rem; }
   .topbar h1 { font-size: 1.6rem; min-width: 0; }
@@ -119,7 +118,6 @@ h1 {
 .controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: end; }
 .controls .opts { flex-wrap: wrap; }
 .seg { display: grid; gap: 0.35rem; min-width: 0; }
-.seg[hidden] { display: none; }
 .seg-label, .col-label {
   font: 500 var(--step--2)/1 var(--font-data);
   text-transform: uppercase;
@@ -358,6 +356,8 @@ th.gstart, td.gstart { border-left: 1px solid var(--hairline); }
 /* Reserve the full startup + per-move expression so a lost startup digit
    does not resize this column and redistribute the rest of the table. */
 th.speed, td.speed { width: 8rem; min-width: 8rem; }
+/* Reserve nine characters (<100.000%), cell padding, and the left border. */
+th.prng, td.prng { width: calc(9ch + 1rem + 1px); min-width: calc(9ch + 1rem + 1px); }
 td.rank { color: var(--muted); width: 2.5rem; }
 th.rank-delta, td.rank-delta { width: 4.5rem; min-width: 4.5rem; }
 td.rank-delta { color: var(--muted); font-size: var(--step--2); }
@@ -422,6 +422,13 @@ footer b { color: var(--ink); font-weight: 600; }
         <label><input type="radio" disabled name="pool" id="pool-held" value="held"><span>Held-out</span></label>
       </div>
     </div>
+    <div class="seg" role="radiogroup" aria-labelledby="l-display-seg" id="display-seg">
+      <span class="seg-label" id="l-display-seg">Show</span>
+      <div class="opts">
+        <label><input type="radio" disabled name="display" id="display-matched" value="matched"><span>Matched</span></label>
+        <label><input type="radio" disabled name="display" id="display-remaining" value="remaining"><span>Remaining</span></label>
+      </div>
+    </div>
   </div>
   <header>
     <p class="dek">Unofficial history of the <a href="https://mazesofmenace.ai/leaderboard/">Teleport Coding Challenge leaderboard</a>, rebuilt from <a href="https://github.com/davidbau/mazesofmenace">the judge's commits</a> since May 5, 2026.</p>
@@ -439,13 +446,6 @@ footer b { color: var(--ink); font-weight: 600; }
           <label><input type="radio" disabled name="metric" id="metric-anim" value="anim"><span>Anim</span></label>
           <label><input type="radio" disabled name="metric" id="metric-startup" value="startup"><span>Startup</span></label>
           <label><input type="radio" disabled name="metric" id="metric-permove" value="permove"><span>Per move</span></label>
-        </div>
-      </div>
-      <div class="seg" role="radiogroup" aria-labelledby="l-prng-view" id="prng-view" hidden>
-        <span class="seg-label" id="l-prng-view">PRNG chart</span>
-        <div class="opts">
-          <label><input type="radio" disabled name="prngView" id="prng-matched" value="matched"><span>Matched</span></label>
-          <label><input type="radio" disabled name="prngView" id="prng-remaining" value="remaining"><span>Remaining</span></label>
         </div>
       </div>
       <div class="seg" role="group" aria-labelledby="l-y-axis">
@@ -522,7 +522,7 @@ footer b { color: var(--ink); font-weight: 600; }
         <button id="st-last" type="button" aria-label="Last scoring run" title="Last scoring run (End)" disabled>⇥</button>
       </div>
     </div>
-    <p class="sub" id="st-sub">Use ← / → to step between runs. Click a column header to sort; select a row to highlight that team in the chart. Δ compares ranks with the preceding run. Changed scores briefly tint green for an increase or red for a decrease.</p>
+    <p class="sub" id="st-sub">Use ← / → to step between runs. Click a column header to sort; select a row to highlight that team in the chart. Δ compares ranks with the preceding run. Changed scores briefly tint green for improvement or red for regression.</p>
     <div class="table-scroll">
       <table id="table">
         <thead id="thead"></thead>
@@ -533,6 +533,7 @@ footer b { color: var(--ink); font-weight: 600; }
 
   <footer>
     <ul>
+      <li><b>Show</b> switches Points, PRNG, Sessions, and Anim between matched and remaining values in the chart and table. Fewer remaining is better.</li>
       <li><b>Points</b> count matched 80&times;24 screens: one point per recorded step where the port's render matches C exactly. The leaderboard's <b>Screen</b> percentage is points as a share of the maximum shown under the column header; hover a Points cell to see it.</li>
       <li><b>PRNG</b> is the share of matched random-number calls. Combined weights each pool by its maximum points, as on the leaderboard.</li>
       <li><b>Sessions</b> counts sessions matched end to end.</li>
@@ -595,23 +596,27 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   const METRICS = {
-    points: { title: 'Points', col: 'points', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'points') },
-    prng: { title: 'PRNG match', col: 'prng', pooled: true, fmt: fmtPrng, domain: [0, 100], tick: (v) => v + '%', value: prngPct },
-    sessions: { title: 'Sessions matched', col: 'sessions', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'passing') },
-    anim: { title: 'Animation frames matched', col: 'anim', pooled: true, fmt: fmtInt, value: (r, p) => pooled(r, p, 'anim_matched') },
+    points: { title: 'Points', remainingTitle: 'Points remaining', col: 'points', pooled: true, max: 'max_points', fmt: fmtInt, value: (r, p) => pooled(r, p, 'points') },
+    prng: { title: 'PRNG match', remainingTitle: 'PRNG remaining', col: 'prng', pooled: true, max: 100, fmt: fmtPrng, domain: [0, 100], tick: (v) => v + '%', value: prngPct },
+    sessions: { title: 'Sessions matched', remainingTitle: 'Sessions remaining', col: 'sessions', pooled: true, max: 'total', fmt: fmtInt, value: (r, p) => pooled(r, p, 'passing') },
+    anim: { title: 'Animation frames matched', remainingTitle: 'Animation frames remaining', col: 'anim', pooled: true, max: 'anim_total', fmt: fmtInt, value: (r, p) => pooled(r, p, 'anim_matched') },
     startup: { title: 'Startup time', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => fmtInt(Math.round(v)) + ' ms', tick: (v) => fmtInt(v), value: (r) => r.speed_startup_ms },
     permove: { title: 'Time per move', col: 'speed', pooled: false, lowerIsBetter: true, fmt: (v) => v.toFixed(2) + ' ms', tick: (v) => v.toFixed(1), value: (r) => r.speed_per_move_ms },
   };
-  function chartMetric() {
-    const metric = METRICS[state.metric];
-    if (state.metric !== 'prng' || state.prngView !== 'remaining') return metric;
+  function metricMax(metric, r, pool) {
+    return typeof metric.max === 'number' ? metric.max : metric.max ? pooled(r, pool, metric.max) : null;
+  }
+  function displayMetric(key) {
+    const metric = METRICS[key];
+    if (!metric.max || state.display !== 'remaining') return metric;
     return {
-      ...metric, title: 'PRNG remaining', lowerIsBetter: true,
+      ...metric, title: metric.remainingTitle, lowerIsBetter: true,
       // Do not display a small nonzero remainder as a perfect zero.
-      fmt: (v) => (v > 0 && v.toFixed(3) === '0.000' ? '<0.001%' : fmtPrng(v)),
+      fmt: key === 'prng' ? (v) => (v > 0 && v.toFixed(3) === '0.000' ? '<0.001%' : fmtPrng(v)) : metric.fmt,
       value: (r, pool) => {
         const matched = metric.value(r, pool);
-        return matched == null ? null : 100 - matched;
+        const max = metricMax(metric, r, pool);
+        return matched == null || max == null ? null : max - matched;
       },
     };
   }
@@ -685,7 +690,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // The pinned run need not be inside it.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
-  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', prngView: 'matched', sort: { key: 'points-combined', dir: 'desc' } };
+  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', display: 'matched', sort: { key: 'points-combined', dir: 'desc' } };
   const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null, yRange: null };
 
   // Object.hasOwn needs Safari 15.4.
@@ -718,7 +723,7 @@ footer b { color: var(--ink); font-weight: 600; }
     }
     if (hasOwn(METRICS, saved.metric)) state.metric = saved.metric;
     if (hasOwn(POOL_TEXT, saved.pool)) state.pool = saved.pool;
-    if (saved.prngView === 'matched' || saved.prngView === 'remaining') state.prngView = saved.prngView;
+    if (saved.display === 'matched' || saved.display === 'remaining') state.display = saved.display;
     if (Array.isArray(saved.yRange) && saved.yRange.length === 2
         && saved.yRange.every(Number.isFinite) && saved.yRange[0] < saved.yRange[1]
         && Number.isFinite(saved.yRange[1] - saved.yRange[0])) state.yRange = [...saved.yRange];
@@ -811,7 +816,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // keeping their own saved view until then.
   let lastForm = null;
   const savedForm = () => JSON.stringify({
-    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, prngView: state.prngView, sort: state.sort, highlight: [...state.highlight], yRange: state.yRange,
+    v: STORE_VERSION, duration: state.duration, end: state.end, metric: state.metric, pool: state.pool, display: state.display, sort: state.sort, highlight: [...state.highlight], yRange: state.yRange,
   });
   function save() {
     const form = savedForm();
@@ -844,7 +849,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // add to a shared link (utm_source, fbclid, from=...); those are kept as
   // they are. A value of ours that makes no sense falls back to its default.
   // Opening a link does not overwrite the saved view; the next change does.
-  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir', 'y_range', 'prng_view'];
+  const URL_KEYS = ['as_of', 'duration', 'utc_end', 'teams', 'metric', 'pool', 'sort', 'dir', 'y_range', 'display'];
   // Rounded up: a run at 13:45:39 is written 13:46, at or after it.
   const isoMinute = (ms) => new Date(ceilMinute(ms)).toISOString().slice(0, 16) + 'Z';
   // Date.parse reads a date-time without a zone as local time, but links are
@@ -887,7 +892,7 @@ footer b { color: var(--ink); font-weight: 600; }
     const word = (k) => params.get(k)?.toLowerCase();
     // The CSV's own pool names (pub, held) are accepted too, as in sort.
     const pool = word('pool');
-    const linked = { metric: word('metric'), pool: poolFromUrl(pool), prngView: word('prng_view'), asOf: parseUtc(params.get('as_of')) };
+    const linked = { metric: word('metric'), pool: poolFromUrl(pool), display: word('display'), asOf: parseUtc(params.get('as_of')) };
     if (params.has('duration')) linked.duration = parseDuration(word('duration'));
     if (params.has('utc_end')) linked.end = parseUtc(params.get('utc_end'));
     if (params.has('y_range')) linked.yRange = params.get('y_range').split(',').map((v) => v.trim() ? Number(v) : NaN);
@@ -896,7 +901,7 @@ footer b { color: var(--ink); font-weight: 600; }
     // dir alone applies to the default order.
     const mapped = key && sortFromUrl(key);
     const sortKeyed = mapped && parseSortKey(mapped) ? mapped : DEFAULTS.sort.key;
-    if (key || dir) linked.sort = { key: sortKeyed, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(sortKeyed) };
+    linked.sort = { key: sortKeyed, dir: dir === 'asc' || dir === 'desc' ? dir : firstDir(sortKeyed, linked.display) };
     if (params.has('teams')) {
       const seen = new Set();
       linked.highlight = [];
@@ -947,7 +952,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (state.end != null) put('utc_end', isoMinute(state.end));
     if (state.metric !== DEFAULTS.metric) put('metric', state.metric);
     if (state.pool !== DEFAULTS.pool) put('pool', POOL_URL[state.pool]);
-    if (state.prngView !== DEFAULTS.prngView) put('prng_view', state.prngView);
+    if (state.display !== DEFAULTS.display) put('display', state.display);
     if (state.yRange) put('y_range', state.yRange.join(','));
     if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
       put('sort', sortToUrl(state.sort.key));
@@ -1066,7 +1071,7 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   function computeView() {
-    const metric = chartMetric();
+    const metric = displayMetric(state.metric);
     const [i0, i1] = runsIn(currentWindow());
     const visible = snapshots.slice(i0, i1 + 1);
     const teams = new Set();
@@ -1082,14 +1087,20 @@ footer b { color: var(--ink); font-weight: 600; }
     // A run of the reader's that has left the data is unpinned: the page
     // rests on the window's last run again.
     if (pinnedIndex() == null) state.pinned = state.end == null ? null : 'end';
-    view = { metric, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
+    // Count maxima can change between runs. Use this window's largest maximum
+    // as the reference when converting a fixed axis between representations.
+    let maximum = null;
+    visible.forEach(s => s.byTeam.forEach(r => {
+      const max = metricMax(metric, r, state.pool);
+      if (Number.isFinite(max)) maximum = Math.max(maximum ?? max, max);
+    }));
+    view = { metric, maximum, i0, visible, series, t0: visible[0].t, t1: visible[visible.length - 1].t };
   }
 
   function renderFilters() {
-    for (const name of ['metric', 'pool', 'prngView']) {
+    for (const name of ['metric', 'pool', 'display']) {
       document.querySelectorAll(`input[name="${name}"]`).forEach((el) => { el.checked = el.value === state[name]; });
     }
-    $('prng-view').hidden = state.metric !== 'prng';
     // The range menu: the window's duration (a preset, or Custom with a
     // dragged, typed or linked one filled in), and where it ends.
     const preset = Object.keys(DURATIONS).find((k) => DURATIONS[k] === state.duration);
@@ -1659,19 +1670,20 @@ footer b { color: var(--ink); font-weight: 600; }
   }
 
   const TABLE_GROUPS = [
-    { col: 'points', metric: 'points', label: 'Points', max: 'max_points' },
+    { col: 'points', metric: 'points', label: 'Points' },
     { col: 'prng', metric: 'prng', label: 'PRNG' },
-    { col: 'sessions', metric: 'sessions', label: 'Sessions', max: 'total' },
-    { col: 'anim', metric: 'anim', label: 'Anim', max: 'anim_total' },
+    { col: 'sessions', metric: 'sessions', label: 'Sessions' },
+    { col: 'anim', metric: 'anim', label: 'Anim' },
   ];
   // Counts are out of a maximum that is the same for every team in a run (the
   // judge scores all forks on the same sessions), so the header states it once
   // and each cell's tooltip gives the share. PRNG is published only as a
   // percentage, with no call counts, so it has no maximum.
   function groupMax(snap, g, pool) {
-    if (!g.max) return null;
+    const metric = METRICS[g.metric];
+    if (typeof metric.max !== 'string') return null;
     for (const r of snap.byTeam.values()) {
-      const v = pooled(r, pool, g.max);
+      const v = metricMax(metric, r, pool);
       if (v != null && !Number.isNaN(v) && v > 0) return v;
     }
     return null;
@@ -1701,11 +1713,12 @@ footer b { color: var(--ink); font-weight: 600; }
     if (key === 'speed') return r.speed_per_move_ms;
     if (key === 'playable') return r.playable == null ? null : Number(r.playable);
     const { group, pool } = parseSortKey(key);
-    const v = METRICS[TABLE_GROUPS.find((g) => g.col === group).metric].value(r, pool);
+    const v = displayMetric(TABLE_GROUPS.find((g) => g.col === group).metric).value(r, pool);
     return v == null || Number.isNaN(v) ? null : v;
   }
-  // Names and speed read best ascending; everything else starts highest first.
-  const firstDir = (key) => (key === 'team' || key === 'speed' ? 'asc' : 'desc');
+  // Fewest remaining leads, just as most matched leads.
+  const firstDir = (key, display = state.display) => (key === 'team' || key === 'speed'
+    || (parseSortKey(key)?.group && display === 'remaining') ? 'asc' : 'desc');
   function setSort(key) {
     stopPlayback();
     const current = sortKey([state.pool]);
@@ -1763,10 +1776,10 @@ footer b { color: var(--ink); font-weight: 600; }
         top.append(th(g.label, { cls: 'group gstart', scope: 'colgroup', colspan: pools.length }));
         pools.forEach((pool, k) => sub.append(th(POOL_LABEL[pool], {
           denom: groupMax(snap, g, pool),
-          cls: k === 0 ? 'num gstart' : 'num', sortAs: `${g.col}-${pool}`, title: `Sort by ${g.label}, ${POOL_LABEL[pool].toLowerCase()}`,
+          cls: (k === 0 ? 'num gstart' : 'num') + (g.col === 'prng' ? ' prng' : ''), sortAs: `${g.col}-${pool}`, title: `Sort by ${g.label}, ${POOL_LABEL[pool].toLowerCase()}`,
         })));
       } else {
-        top.append(th(g.label, { cls: 'num gstart', sortAs: `${g.col}-${pools[0]}`, denom: groupMax(snap, g, pools[0]) }));
+        top.append(th(g.label, { cls: 'num gstart' + (g.col === 'prng' ? ' prng' : ''), sortAs: `${g.col}-${pools[0]}`, denom: groupMax(snap, g, pools[0]) }));
       }
     }
     top.append(
@@ -1792,8 +1805,10 @@ footer b { color: var(--ink); font-weight: 600; }
     const idx = pinnedIndex() ?? snapshots.length - 1;
     const snap = snapshots[idx];
     const tbody = $('tbody');
-    const oldScores = new Map([...tbody.rows].map(tr => [tr.dataset.team,
-      new Map([...tr.querySelectorAll('[data-score]')].map(td => [td.dataset.score, td.dataset.value]))]));
+    const oldScores = new Map(tbody.dataset.display === state.display ? [...tbody.rows].map(tr => [tr.dataset.team,
+      new Map([...tr.querySelectorAll('[data-score]')].map(td => [td.dataset.score, td.dataset.value]))]) : []);
+    tbody.dataset.display = state.display;
+    $('table').setAttribute('aria-label', `${state.display === 'remaining' ? 'Remaining' : 'Matched'} scores`);
     // Read the displayed positions before replacing rows. During a quick
     // reversal these include the unfinished animation, so motion continues
     // from where the reader sees the team rather than its last destination.
@@ -1877,27 +1892,29 @@ footer b { color: var(--ink); font-weight: 600; }
       }
       const sortCls = (col) => (col === key ? 'num is-sort' : 'num');
       for (const g of TABLE_GROUPS) {
+        const metric = displayMetric(g.metric);
         pools.forEach((pool, k) => {
-          const v = METRICS[g.metric].value(r, pool);
-          const td = cell(v == null || Number.isNaN(v) ? '—' : METRICS[g.metric].fmt(v), sortCls(`${g.col}-${pool}`));
+          const v = metric.value(r, pool);
+          const td = cell(v == null || Number.isNaN(v) ? '—' : metric.fmt(v), sortCls(`${g.col}-${pool}`) + (g.col === 'prng' ? ' prng' : ''));
           td.dataset.score = `${g.col}-${pool}`;
           td.dataset.value = Number.isFinite(v) ? String(v) : '';
           const previous = oldScores.get(r.team)?.get(td.dataset.score);
           // Compare the same team's same metric and pool in the outgoing view.
           // Initial loads, missing scores, and pool switches have no comparison.
           if (previous != null && previous !== '' && Number.isFinite(v)
-              && METRICS[g.metric].fmt(Number(previous)) !== td.textContent) {
+              && metric.fmt(Number(previous)) !== td.textContent) {
             const direction = v > Number(previous) ? 'increase' : 'decrease';
-            td.title = `Score ${direction}: ${METRICS[g.metric].fmt(Number(previous))} → ${METRICS[g.metric].fmt(v)}`;
+            const improved = metric.lowerIsBetter ? v < Number(previous) : v > Number(previous);
+            td.title = `Score ${direction}: ${metric.fmt(Number(previous))} → ${metric.fmt(v)}`;
             if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
               td.animate([
-                { backgroundColor: `color-mix(in srgb, var(--${direction === 'increase' ? 'good' : 'bad'}) 18%, var(--bg))` },
+                { backgroundColor: `color-mix(in srgb, var(--${improved ? 'good' : 'bad'}) 18%, var(--bg))` },
                 { backgroundColor: 'transparent' },
               ], { duration: 480, easing: 'ease-out' });
             }
           }
           const max = groupMax(snap, g, pool);
-          if (max && v != null && !Number.isNaN(v)) td.title = (td.title ? td.title + '\n' : '') + `${fmtInt(v)} of ${fmtInt(max)} (${fmtPct((v / max) * 100)})`;
+          if (max && v != null && !Number.isNaN(v)) td.title = (td.title ? td.title + '\n' : '') + `${fmtInt(v)} ${state.display === 'remaining' ? 'remaining ' : ''}of ${fmtInt(max)} (${fmtPct((v / max) * 100)})`;
           if (k === 0) td.classList.add('gstart');
         });
       }
@@ -2134,9 +2151,12 @@ footer b { color: var(--ink); font-weight: 600; }
       el.addEventListener('change', () => {
         stopPlayback();
         state[el.name] = el.value;
-        if (el.name === 'prngView') {
-          // Reflect the fixed interval so the same scores remain in view.
-          if (state.yRange) state.yRange = [100 - state.yRange[1], 100 - state.yRange[0]];
+        if (el.name === 'display') {
+          // A representation switch reverses score ordering, not team intent.
+          if (parseSortKey(state.sort.key)?.group) state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+          if (state.yRange && view.metric.max) {
+            state.yRange = view.maximum == null ? null : [view.maximum - state.yRange[1], view.maximum - state.yRange[0]];
+          }
         } else state.yRange = null;
         hideHover();
         renderAll();
