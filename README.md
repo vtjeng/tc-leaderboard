@@ -80,8 +80,8 @@ the address bar, so a copied link reproduces the view:
   with padding, then holds those bounds as the window or highlights change.
   Values outside the bounds are clipped. Click it again to refit;
   **Reset Y-axis**, or changing the metric or pool, restores automatic scaling.
-- `display`: `remaining` shows unmatched Points, PRNG, Sessions, and Anim in
-  both the chart and standings; absent or `matched` shows matched values.
+- `display`: absent or `remaining` shows unmatched Points, PRNG, Sessions,
+  and Anim in both the chart and standings; `matched` shows matched values.
   The global Matched/Remaining switch converts fixed bounds (98–100% PRNG
   matched becomes 0–2% remaining). Counts use the largest maximum in the chart's
   time window as the conversion reference; each plotted value and table cell

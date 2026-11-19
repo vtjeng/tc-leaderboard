@@ -33,13 +33,43 @@ const hoverLatest = async page => {
         `${t},Almost,1,3,0,1,99.9999,99.9999,1,3,0,1,6,10,1,4,123,1.25`, // Nonzero remainder too small for three decimals.
         `${t},Missing,,,,,,`, // Missing matches must remain gaps, not become 100% remaining.
       ]).join('\n');
+    const defaults = await browser.newPage();
+    await defaults.route('**/data/leaderboard.csv', route => route.fulfill({ contentType: 'text/csv', body: csv }));
+    await defaults.goto(base);
+    await ready(defaults);
+    assert.equal(await defaults.locator('#display-remaining').isChecked(), true, 'fresh visits default to remaining');
+    assert.equal(await defaults.locator('#chart-title').textContent(), 'Points remaining');
+    assert.equal(await defaults.locator('#thead th[aria-sort]').getAttribute('aria-sort'), 'ascending', 'fewest remaining points leads');
+    assert.equal(await defaults.locator('#tbody tr').first().getAttribute('data-team'), 'Perfect'); // Perfect has zero remaining points.
+    assert.equal(new URL(defaults.url()).searchParams.has('display'), false, 'remaining is the default URL form');
+    await toggle(defaults, 'matched').click();
+    const matchedLink = defaults.url();
+    await defaults.goto(base);
+    await ready(defaults);
+    assert.equal(await defaults.locator('#display-matched').isChecked(), true, 'saved matched preference overrides the default');
+    const linked = await browser.newPage();
+    await linked.route('**/data/leaderboard.csv', route => route.fulfill({ contentType: 'text/csv', body: csv }));
+    await linked.goto(matchedLink);
+    await ready(linked);
+    assert.equal(await linked.locator('#display-matched').isChecked(), true, 'matched links work without saved preferences');
+    assert.equal(await linked.locator('#thead th[aria-sort]').getAttribute('aria-sort'), 'descending');
+    await linked.locator('#thead button[data-key=points-combined]').click();
+    await linked.reload();
+    await ready(linked);
+    assert.equal(await linked.locator('#thead th[aria-sort]').getAttribute('aria-sort'), 'ascending', 'reversed matched order survives reload');
+    await toggle(linked, 'remaining').click();
+    await linked.reload();
+    await ready(linked);
+    assert.equal(await linked.locator('#thead th[aria-sort]').getAttribute('aria-sort'), 'descending', 'reversed remaining order survives reload');
+    await linked.close();
+    await defaults.close();
     let release;
     const released = new Promise(resolve => { release = resolve; });
     await page.route('**/data/leaderboard.csv', async route => {
       await released;
       await route.fulfill({ contentType: 'text/csv', body: csv });
     });
-    await page.goto(`${base}?metric=prng&pool=public&teams=Alpha,Perfect,Almost,Missing&duration=all`);
+    await page.goto(`${base}?display=matched&metric=prng&pool=public&teams=Alpha,Perfect,Almost,Missing&duration=all`);
     assert.equal(await page.locator('#topbar #display-seg').count(), 1, 'Remaining belongs with the global controls');
     assert.equal(await page.locator('#display-remaining').isDisabled(), true, 'toggle waits for data');
     release();
@@ -92,7 +122,7 @@ const hoverLatest = async page => {
     await toggle(page, 'matched').click();
     const restored = await bounds(page);
     restored.forEach((v, i) => assert.ok(Math.abs(v - matched[i]) < 1e-10)); // Allow only floating-point round-trip error.
-    assert.equal(new URL(page.url()).searchParams.has('display'), false, 'matched is the default URL form');
+    assert.equal(new URL(page.url()).searchParams.get('display'), 'matched', 'matched is explicit in shared links');
 
     // A keyboard switch while scrolled must keep focus, scroll, highlights, window, and pinned run.
     await page.locator('#svg').focus();
@@ -132,7 +162,7 @@ const hoverLatest = async page => {
 
     // Every count metric converts a fitted interval using the window's maximum.
     for (const [metric, maximum, expected] of [['points', 4, '1'], ['sessions', 4, '2'], ['anim', 14, '4']]) { // Combined fixture totals: 3+1 points/sessions and 10+4 frames.
-      await page.goto(`${base}?metric=${metric}&pool=combined&teams=Alpha&duration=all`);
+      await page.goto(`${base}?display=matched&metric=${metric}&pool=combined&teams=Alpha&duration=all`);
       await ready(page);
       await page.locator('#fit-highlighted').click();
       const fitted = await bounds(page);
@@ -144,7 +174,7 @@ const hoverLatest = async page => {
       (await bounds(page)).forEach((v, i) => assert.ok(Math.abs(v - fitted[i]) < 1e-10)); // Only floating-point round-trip error is allowed.
     }
     // Timings keep the same chart and fixed interval even while the table switches.
-    await page.goto(`${base}?metric=startup&teams=Alpha&duration=all`);
+    await page.goto(`${base}?display=matched&metric=startup&teams=Alpha&duration=all`);
     await ready(page);
     await page.locator('#fit-highlighted').click();
     const speedBounds = await bounds(page);
@@ -194,7 +224,8 @@ const hoverLatest = async page => {
     }
     await page.goto(`${base}?metric=prng&display=invalid&teams=Alpha`);
     await ready(page);
-    assert.equal(await page.locator('#display-matched').isChecked(), true, 'invalid mode uses matched');
+    assert.equal(await page.locator('#display-remaining').isChecked(), true, 'invalid mode uses the default remaining view');
+    assert.equal(await page.locator('#thead th[aria-sort]').getAttribute('aria-sort'), 'ascending', 'invalid mode uses the default sort direction');
     assert.deepEqual(errors, []);
     console.log('Global Remaining: delayed data, complemented fit, tooltips, pools, gaps, persistence, links, keyboard, selection and responsive layout passed.');
   } finally { await browser.close(); }
