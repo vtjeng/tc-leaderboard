@@ -690,7 +690,7 @@ footer b { color: var(--ink); font-weight: 600; }
   // The pinned run need not be inside it.
   // sort is the standings table's own order, independent of the chart metric:
   // key is 'team', 'speed', 'playable' or '<group>-<pool>' (e.g. 'prng-held').
-  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', display: 'matched', sort: { key: 'points-combined', dir: 'desc' } };
+  const DEFAULTS = { duration: DEFAULT_DURATION, end: null, metric: 'points', pool: 'combined', display: 'remaining', sort: { key: 'points-combined', dir: 'asc' } };
   const state = { ...DEFAULTS, sort: { ...DEFAULTS.sort }, highlight: new Map(), pinned: null, yRange: null };
 
   // Object.hasOwn needs Safari 15.4.
@@ -892,7 +892,8 @@ footer b { color: var(--ink); font-weight: 600; }
     const word = (k) => params.get(k)?.toLowerCase();
     // The CSV's own pool names (pub, held) are accepted too, as in sort.
     const pool = word('pool');
-    const linked = { metric: word('metric'), pool: poolFromUrl(pool), display: word('display'), asOf: parseUtc(params.get('as_of')) };
+    const display = word('display');
+    const linked = { metric: word('metric'), pool: poolFromUrl(pool), display: display === 'matched' || display === 'remaining' ? display : DEFAULTS.display, asOf: parseUtc(params.get('as_of')) };
     if (params.has('duration')) linked.duration = parseDuration(word('duration'));
     if (params.has('utc_end')) linked.end = parseUtc(params.get('utc_end'));
     if (params.has('y_range')) linked.yRange = params.get('y_range').split(',').map((v) => v.trim() ? Number(v) : NaN);
@@ -954,7 +955,7 @@ footer b { color: var(--ink); font-weight: 600; }
     if (state.pool !== DEFAULTS.pool) put('pool', POOL_URL[state.pool]);
     if (state.display !== DEFAULTS.display) put('display', state.display);
     if (state.yRange) put('y_range', state.yRange.join(','));
-    if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== DEFAULTS.sort.dir) {
+    if (state.sort.key !== DEFAULTS.sort.key || state.sort.dir !== firstDir(state.sort.key)) {
       put('sort', sortToUrl(state.sort.key));
       if (state.sort.dir !== firstDir(state.sort.key)) put('dir', state.sort.dir);
     }
