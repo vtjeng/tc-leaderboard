@@ -49,7 +49,7 @@ const shown = page => page.locator('#st-time').textContent();
       await dataReady;
       await route.fulfill({ contentType: 'text/csv', body: csv });
     });
-    await page.goto(`${base}?teams=Alpha&duration=all`);
+    await page.goto(`${base}?display=matched&teams=Alpha&duration=all`); // Tint assertions below describe changes in matched scores.
     const prev = page.getByRole('button', { name: 'Previous scoring run', exact: true });
     const next = page.getByRole('button', { name: 'Next scoring run', exact: true });
     const start = page.getByRole('button', { name: 'First scoring run', exact: true });
